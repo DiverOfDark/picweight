@@ -4,6 +4,7 @@
  * the energy coming from. Never one chart with two scales.
  */
 import { computed, onMounted, ref } from 'vue'
+import { MEAL_STATUS, WEIGHT_SOURCE } from '@/lib/enums'
 import { Scale } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { dayLabel, grams, kcal, kg, localDateKey, shiftDateKey, stamp, todayKey } from '@/lib/format'
@@ -74,7 +75,7 @@ const weightDelta = computed(() => {
 const macroDays = computed(() => {
   const buckets = new Map()
   for (const meal of meals.value) {
-    if (meal.status === 'Failed') continue
+    if (meal.status === MEAL_STATUS.FAILED) continue
     const key = localDateKey(meal.eaten_at, meal.timezone_offset)
     if (!buckets.has(key)) buckets.set(key, { key, caption: dayLabel(key), protein_g: 0, fat_g: 0, carbs_g: 0 })
     const bucket = buckets.get(key)
@@ -117,7 +118,7 @@ async function logWeight() {
   error.value = ''
   logNotice.value = ''
   try {
-    const result = await api.logWeight({ weight_kg: value, source: 'Manual' })
+    const result = await api.logWeight({ weight_kg: value, source: WEIGHT_SOURCE.MANUAL })
     newWeight.value = ''
     logNotice.value = result.targets_recomputed
       ? 'Logged. Targets were recomputed from the new weight.'

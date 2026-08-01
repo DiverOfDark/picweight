@@ -9,6 +9,7 @@
  * agent's own prior reasoning and costs one short turn, not another full loop.
  */
 import { computed, onMounted, ref, watch } from 'vue'
+import { MEAL_STATUS, isInFlight } from '@/lib/enums'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -53,7 +54,7 @@ const notice = ref('')
 
 const mealId = computed(() => route.params.id)
 const thumbnail = computed(() => (meal.value?.thumbnail_url ? api.thumbnailUrl(meal.value.id) : null))
-const analysing = computed(() => ['Pending', 'Analyzing'].includes(meal.value?.status))
+const analysing = computed(() => isInFlight(meal.value?.status))
 
 async function load() {
   loading.value = true
@@ -77,7 +78,7 @@ async function confirm() {
   saving.value = true
   error.value = ''
   try {
-    meal.value = await api.patchMeal(mealId.value, { status: 'Confirmed' })
+    meal.value = await api.patchMeal(mealId.value, { status: MEAL_STATUS.CONFIRMED })
     notice.value = 'Confirmed. This dish now feeds recall, so the next order starts from these numbers.'
   } catch (e) {
     error.value = e.message
@@ -266,7 +267,7 @@ onMounted(load)
         </div>
 
         <div class="flex shrink-0 flex-wrap gap-2">
-          <Button v-if="meal.status !== 'Confirmed'" :disabled="saving || analysing" @click="confirm">
+          <Button v-if="meal.status !== MEAL_STATUS.CONFIRMED" :disabled="saving || analysing" @click="confirm">
             <Check /> Confirm
           </Button>
           <Button v-if="!editing" variant="outline" :disabled="analysing" @click="startEditing">

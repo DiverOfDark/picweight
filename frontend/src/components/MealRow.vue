@@ -4,6 +4,7 @@
  * meals reads as a column of measurements.
  */
 import { computed } from 'vue'
+import { MEAL_STATUS, isInFlight } from '@/lib/enums'
 import { Utensils } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { grams, kcal, localTime } from '@/lib/format'
@@ -20,7 +21,7 @@ const name = computed(() => props.meal.dish_name || 'Unnamed meal')
 const thumbnail = computed(() =>
   props.meal.thumbnail_url ? api.thumbnailUrl(props.meal.id) : null,
 )
-const pending = computed(() => ['Pending', 'Analyzing'].includes(props.meal.status))
+const pending = computed(() => isInFlight(props.meal.status))
 </script>
 
 <template>
@@ -46,7 +47,7 @@ const pending = computed(() => ['Pending', 'Analyzing'].includes(props.meal.stat
       <p class="truncate text-sm font-medium text-ink">{{ name }}</p>
       <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
         <span class="num">{{ time }}</span>
-        <StatusPill v-if="meal.status !== 'Confirmed'" :meal="meal.status" />
+        <StatusPill v-if="meal.status !== MEAL_STATUS.CONFIRMED" :meal="meal.status" />
         <span v-if="meal.revision > 1" class="num">rev {{ meal.revision }}</span>
         <span v-if="meal.error" class="truncate text-critical">{{ meal.error }}</span>
       </div>

@@ -6,6 +6,8 @@
  * custom property; everything that reads `text-day` / `bg-day` follows.
  */
 
+import { MEAL_STATUS } from '@/lib/enums'
+
 /** Status → the token that describes it. Status colours are never reused as series colours. */
 export const DAY_STATUS = {
   on_track: { label: 'On track', accent: 'var(--color-good)', tone: 'good' },
@@ -32,13 +34,13 @@ export function applyDayAccent(status) {
   document.documentElement.style.setProperty('--day-accent', resolved || '#898781')
 }
 
-/** Meal lifecycle → the tone its pill wears. */
+/** Meal lifecycle → the tone its pill wears. Keyed by wire value (`lib/enums.js`). */
 export const MEAL_TONE = {
-  Pending: 'muted',
-  Analyzing: 'warning',
-  NeedsReview: 'serious',
-  Confirmed: 'good',
-  Failed: 'critical',
+  [MEAL_STATUS.PENDING]: 'muted',
+  [MEAL_STATUS.ANALYZING]: 'warning',
+  [MEAL_STATUS.NEEDS_REVIEW]: 'serious',
+  [MEAL_STATUS.CONFIRMED]: 'good',
+  [MEAL_STATUS.FAILED]: 'critical',
 }
 
 /** Tailwind classes for a tone. Kept here so a pill never invents its own colour. */

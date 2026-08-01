@@ -8,6 +8,7 @@
  * phone and the browser can never disagree about your target.
  */
 import { computed, onMounted, ref } from 'vue'
+import { GOAL_OPTIONS, GOAL_TYPE, SEX, SEX_OPTIONS } from '@/lib/enums'
 import { Check, Download, FileJson, FileSpreadsheet, TriangleAlert } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { grams, kcal, stamp } from '@/lib/format'
@@ -24,11 +25,7 @@ const ACTIVITY = [
   { value: 1.9, label: 'Extremely active — physical job or two-a-days' },
 ]
 
-const GOALS = [
-  { value: 'Lose', label: 'Lose weight' },
-  { value: 'Maintain', label: 'Maintain' },
-  { value: 'Gain', label: 'Gain weight' },
-]
+const GOALS = GOAL_OPTIONS
 
 const me = ref(null)
 const loading = ref(true)
@@ -38,11 +35,11 @@ const warnings = ref([])
 const saved = ref(false)
 
 const form = ref({
-  sex: 'Male',
+  sex: SEX.MALE,
   birth_date: '1990-01-01',
   height_cm: 180,
   activity_factor: 1.375,
-  goal_type: 'Lose',
+  goal_type: GOAL_TYPE.LOSE,
   target_weight_kg: 75,
   rate_kg_per_week: 0.5,
   current_weight_kg: '',
@@ -144,8 +141,9 @@ onMounted(load)
                 v-model="form.sex"
                 class="h-10 w-full rounded-lg border border-input bg-black/25 px-3 text-sm text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
+                <option v-for="option in SEX_OPTIONS" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
               </select>
               <p class="text-xs text-ink-3">Changes the BMR constant by 166 kcal.</p>
             </div>

@@ -4,6 +4,7 @@
  * meaning on its own.
  */
 import { computed } from 'vue'
+import { MEAL_STATUS } from '@/lib/enums'
 import {
   AlertTriangle,
   Check,
@@ -25,11 +26,11 @@ const props = defineProps({
 })
 
 const ICONS = {
-  Pending: Clock,
-  Analyzing: Loader2,
-  NeedsReview: Eye,
-  Confirmed: Check,
-  Failed: CircleAlert,
+  [MEAL_STATUS.PENDING]: Clock,
+  [MEAL_STATUS.ANALYZING]: Loader2,
+  [MEAL_STATUS.NEEDS_REVIEW]: Eye,
+  [MEAL_STATUS.CONFIRMED]: Check,
+  [MEAL_STATUS.FAILED]: CircleAlert,
   on_track: Check,
   tight: AlertTriangle,
   over: CircleAlert,
@@ -42,7 +43,7 @@ const tone = computed(() =>
 )
 const text = computed(() => (props.meal ? label(props.meal) : dayStatus(props.day).label))
 const icon = computed(() => ICONS[props.meal ?? props.day] ?? Clock)
-const spinning = computed(() => props.meal === 'Analyzing')
+const spinning = computed(() => props.meal === MEAL_STATUS.ANALYZING)
 </script>
 
 <template>

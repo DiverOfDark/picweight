@@ -111,38 +111,58 @@ export function stamp(instant) {
   return `${dayLabel(localDateKey(instant, offset))}, ${localTime(instant, offset)}`
 }
 
-/** Human-readable enum labels. The API speaks PascalCase; people do not. */
+/**
+ * Human-readable enum labels, keyed by the **wire** value.
+ *
+ * The API speaks lowercase snake_case (`needs_review`), never the PascalCase
+ * Rust variant name. See `lib/enums.js` for why that is worth a comment.
+ */
 const LABELS = {
-  Pending: 'Queued',
-  Analyzing: 'Analysing',
-  NeedsReview: 'Needs review',
-  Confirmed: 'Confirmed',
-  Failed: 'Failed',
-  Vision: 'Photo',
-  RecentChip: 'Recent chip',
-  ShareIntent: 'Share sheet',
-  Comment: 'Comment',
-  Manual: 'Manual',
-  Agent: 'Estimated',
-  User: 'You',
-  Barcode: 'Barcode',
-  Recall: 'From history',
-  Model: 'Estimated',
-  Web: 'Web',
-  Onboarding: 'Onboarding',
-  Import: 'Import',
-  Scale: 'Scale',
-  Male: 'Male',
-  Female: 'Female',
-  Lose: 'Lose weight',
-  Maintain: 'Maintain',
-  Gain: 'Gain weight',
+  // meal status
+  pending: 'Queued',
+  analyzing: 'Analysing',
+  needs_review: 'Needs review',
+  confirmed: 'Confirmed',
+  failed: 'Failed',
+  // name_source
+  vision: 'Photo',
+  recent_chip: 'Recent chip',
+  share_intent: 'Share sheet',
+  comment: 'Comment',
+  manual: 'Manual',
+  // grams_source / macro_source
+  agent: 'Estimated',
+  user: 'You',
+  barcode: 'Barcode',
+  recall: 'From history',
+  model: 'Estimated',
+  web: 'Web',
+  // weight source
+  onboarding: 'Onboarding',
+  import: 'Import',
+  scale: 'Scale',
+  // profile
+  male: 'Male',
+  female: 'Female',
+  lose: 'Lose weight',
+  maintain: 'Maintain',
+  gain: 'Gain weight',
 }
 
-/** Turn an API enum variant into something readable. */
+/**
+ * Turn an API enum value into something readable.
+ *
+ * Unknown values are prettified rather than echoed raw, so a variant added
+ * server-side shows as "Needs review" rather than leaking `needs_review` into
+ * the UI. That also means a future mismatch degrades visibly-but-gracefully
+ * instead of silently, which is how the PascalCase bug hid for so long.
+ */
 export function label(variant) {
   if (!variant) return ''
-  return LABELS[variant] ?? variant
+  const known = LABELS[variant]
+  if (known) return known
+  const pretty = String(variant).replace(/_/g, ' ')
+  return pretty.charAt(0).toUpperCase() + pretty.slice(1)
 }
 
 /** Sum the macros of a list of items into a `MacroTotals`-shaped object. */
