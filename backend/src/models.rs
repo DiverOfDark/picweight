@@ -33,7 +33,15 @@ macro_rules! text_enum {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
         $vis enum $name {
-            $( $(#[$vmeta])* #[serde(rename = $text)] $variant ),+
+            // `serde(rename)` fixes the wire format; `schema(rename)` fixes what
+            // the OpenAPI document *claims* the wire format is. utoipa does not
+            // infer the second from the first for per-variant renames, and the
+            // two silently disagreeing is not hypothetical: the spec shipped
+            // `Sex: ["Male","Female"]` while the server accepted only
+            // `male`/`female`. Both generated and hand-written clients believed
+            // the document and broke. `enum_wire_values_match_the_openapi_schema`
+            // below now fails the build if these ever drift again.
+            $( $(#[$vmeta])* #[serde(rename = $text)] #[schema(rename = $text)] $variant ),+
         }
 
         impl $name {
@@ -863,5 +871,98 @@ mod tests {
         );
         assert_eq!(normalize_dish_name("Pad-Thai  w/ Chicken"), "pad thai w chicken");
         assert_eq!(normalize_dish_name("Pad Thai"), normalize_dish_name("pad  thai"));
+    }
+
+    /// The OpenAPI document must describe the enum values the server actually
+    /// speaks — every client, generated or hand-written, trusts it completely.
+    ///
+    /// This shipped broken: `serde(rename)` set the wire format while utoipa
+    /// published the raw Rust identifiers, so the spec advertised
+    /// `Sex: ["Male","Female"]` against a server that accepts only
+    /// `male`/`female`. The Vue client read the spec, did as it was told, and
+    /// every enum-valued write failed; the generated Android client inherited
+    /// the same lie. A comment cannot prevent that recurring — this test can.
+    #[test]
+    fn enum_wire_values_match_the_openapi_schema() {
+        use utoipa::OpenApi;
+
+        let doc = serde_json::to_value(crate::api::ApiDoc::openapi())
+            .expect("the OpenAPI document must serialise");
+        let schemas = doc
+            .pointer("/components/schemas")
+            .and_then(|s| s.as_object())
+            .expect("the document must expose component schemas");
+
+        // Enums a client can see. Each MUST be published, and published
+        // correctly — these are the ones a generator turns into constants.
+        let client_facing: &[(&str, Vec<&str>)] = &[
+            ("MealStatus", MealStatus::ALL.iter().map(|v| v.as_str()).collect()),
+            ("NameSource", NameSource::ALL.iter().map(|v| v.as_str()).collect()),
+            ("GramsSource", GramsSource::ALL.iter().map(|v| v.as_str()).collect()),
+            ("MacroSource", MacroSource::ALL.iter().map(|v| v.as_str()).collect()),
+            ("Sex", Sex::ALL.iter().map(|v| v.as_str()).collect()),
+            ("GoalType", GoalType::ALL.iter().map(|v| v.as_str()).collect()),
+            ("WeightSource", WeightSource::ALL.iter().map(|v| v.as_str()).collect()),
+        ];
+
+        // `JobStatus` is internal to the analysis queue and deliberately not
+        // exposed, so absence is fine — but if it is ever surfaced, it still
+        // has to be spelled correctly.
+        let internal: &[(&str, Vec<&str>)] =
+            &[("JobStatus", JobStatus::ALL.iter().map(|v| v.as_str()).collect())];
+
+        for (name, wire) in client_facing.iter().chain(internal) {
+            let Some(schema) = schemas.get(*name) else {
+                assert!(
+                    internal.iter().any(|(n, _)| n == name),
+                    "{name} is client-facing but missing from the OpenAPI document"
+                );
+                continue;
+            };
+            let published: Vec<&str> = schema
+                .get("enum")
+                .and_then(|e| e.as_array())
+                .unwrap_or_else(|| panic!("{name} must publish an `enum` list, not a bare string"))
+                .iter()
+                .map(|v| v.as_str().expect("enum entries must be strings"))
+                .collect();
+
+            assert_eq!(
+                &published, wire,
+                "{name}: the OpenAPI document advertises {published:?} but the server \
+                 accepts {wire:?}. Clients are generated from this document, so a \
+                 mismatch here breaks them silently. Add `#[schema(rename = ...)]` \
+                 alongside `#[serde(rename = ...)]` in the `text_enum!` macro."
+            );
+        }
+    }
+
+    /// Round-trip every variant through serde to prove `as_str` really is the
+    /// wire format, rather than a parallel spelling that merely looks right.
+    #[test]
+    fn as_str_is_the_serde_representation() {
+        macro_rules! check {
+            ($ty:ty) => {
+                for variant in <$ty>::ALL {
+                    let json = serde_json::to_string(variant).expect("serialises");
+                    assert_eq!(
+                        json,
+                        format!("\"{}\"", variant.as_str()),
+                        "{} serialises differently from as_str()",
+                        stringify!($ty)
+                    );
+                    let back: $ty = serde_json::from_str(&json).expect("round-trips");
+                    assert_eq!(&back, variant);
+                }
+            };
+        }
+        check!(MealStatus);
+        check!(NameSource);
+        check!(GramsSource);
+        check!(MacroSource);
+        check!(Sex);
+        check!(GoalType);
+        check!(JobStatus);
+        check!(WeightSource);
     }
 }

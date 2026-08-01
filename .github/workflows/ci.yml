@@ -8,6 +8,39 @@ on:
     branches: [ master ]
 
 jobs:
+  # The API contract is generated, never hand-written: `android/openapi.json`
+  # comes from the Rust types, the Android Retrofit client and the web client's
+  # enums both come from it. This job fails if the committed generated output
+  # has drifted from what the current spec produces.
+  #
+  # It exists because a spec that lied about its own enum casing
+  # (`Sex: ["Male","Female"]` against a server accepting `male`/`female`) broke
+  # every enum-valued write in the web client, silently, for a whole release.
+  # The backend has its own guard, `enum_wire_values_match_the_openapi_schema`;
+  # this is the client-side half.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install web deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Generated client is in sync with the spec
+        working-directory: frontend
+        run: npm run check:generated
+
+      - name: Web build
+        working-directory: frontend
+        run: npm run build
+
   # The Rust and Vue builds are not repeated here: the Dockerfile runs
   # `cargo test --release` (PRD §10) and `npm run build` inside the image, so
   # the `docker` job below is the backend/frontend gate. This job exists to get

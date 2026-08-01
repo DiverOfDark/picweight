@@ -1775,19 +1775,19 @@
         "type": "string",
         "description": "Direction of the calorie goal.",
         "enum": [
-          "Lose",
-          "Maintain",
-          "Gain"
+          "lose",
+          "maintain",
+          "gain"
         ]
       },
       "GramsSource": {
         "type": "string",
         "description": "Where an item's gram figure came from.",
         "enum": [
-          "Agent",
-          "User",
-          "Barcode",
-          "Recall"
+          "agent",
+          "user",
+          "barcode",
+          "recall"
         ]
       },
       "GroupResponse": {
@@ -1965,11 +1965,11 @@
         "type": "string",
         "description": "Where an item's macros came from.",
         "enum": [
-          "Recall",
-          "Model",
-          "Barcode",
-          "Web",
-          "User"
+          "recall",
+          "model",
+          "barcode",
+          "web",
+          "user"
         ]
       },
       "MacroTotals": {
@@ -2482,22 +2482,22 @@
         "type": "string",
         "description": "Lifecycle of a meal. `pending`/`analyzing` are in-flight, `needs_review`\nmeans the agent produced a draft the user has not confirmed, `confirmed`\nis the only status `recall_similar_meals` reads from, `failed` is loud.",
         "enum": [
-          "Pending",
-          "Analyzing",
-          "NeedsReview",
-          "Confirmed",
-          "Failed"
+          "pending",
+          "analyzing",
+          "needs_review",
+          "confirmed",
+          "failed"
         ]
       },
       "NameSource": {
         "type": "string",
         "description": "Which input path supplied the dish name. Instrumented in M4 to answer\nPRD §14.2 — whether the zero-keyboard paths actually get used.",
         "enum": [
-          "Vision",
-          "RecentChip",
-          "ShareIntent",
-          "Comment",
-          "Manual"
+          "vision",
+          "recent_chip",
+          "share_intent",
+          "comment",
+          "manual"
         ]
       },
       "PatchMealItem": {
@@ -2890,8 +2890,8 @@
         "type": "string",
         "description": "Biological sex, as required by the Mifflin-St Jeor BMR formula (§6).",
         "enum": [
-          "Male",
-          "Female"
+          "male",
+          "female"
         ]
       },
       "TargetInputs": {
@@ -3174,10 +3174,10 @@
         "type": "string",
         "description": "How a weight reading was captured.",
         "enum": [
-          "Manual",
-          "Onboarding",
-          "Import",
-          "Scale"
+          "manual",
+          "onboarding",
+          "import",
+          "scale"
         ]
       }
     },

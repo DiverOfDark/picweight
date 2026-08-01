@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "generate": "node scripts/generate-api.mjs",
+    "prebuild": "npm run generate",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:generated": "node scripts/check-generated.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.0",
@@ -22,6 +25,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",
     "@vitejs/plugin-vue": "^6.0.5",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.2.2",
     "vite": "^8.0.0"
   }

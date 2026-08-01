@@ -1,63 +1,47 @@
 /**
- * Canonical API enum wire values.
+ * API enum values, re-exported from the generated contract, plus the small
+ * derived helpers a spec cannot express.
  *
- * The backend serialises every enum through the `text_enum!` macro in
- * `backend/src/models.rs`, which emits **lowercase snake_case** strings —
- * `needs_review`, `recent_chip`, `male` — not the PascalCase Rust variant
- * names. Getting that backwards is not a hypothetical: the first version of
- * this frontend keyed its label and tone maps by `NeedsReview`/`Male`/`Lose`
- * and compared statuses against `'Confirmed'`. Every lookup silently fell
- * through to a default and every comparison silently inverted, so failed
- * meals were counted in trends and confirmed meals kept offering a Confirm
- * button. Only `PUT /me/profile` failed loudly, because `sex` is one of the
- * few enums sent back to the server:
+ * **No enum value is typed by hand in this file, or anywhere else in the web
+ * client.** They come from `generated/enums.js`, which comes from
+ * `android/openapi.json`, which comes from the Rust types. That chain exists
+ * because breaking it caused three production bugs in one day — culminating in
+ * a spec that advertised `Sex: ["Male","Female"]` against a server accepting
+ * only `male`/`female`, which the frontend then faithfully copied.
  *
- *   unknown variant `Male`, expected `male` or `female`
+ * Two guards keep the chain honest:
+ *   - backend `enum_wire_values_match_the_openapi_schema` fails if the document
+ *     stops describing what the server actually speaks;
+ *   - `npm run check:generated` (CI) fails if the committed output here drifts
+ *     from what the current spec produces.
  *
- * So: these strings are declared once, here, and imported everywhere. Any
- * component comparing a status against a bare string literal is a bug.
- *
- * Authority is `android/openapi.json`, generated from the utoipa annotations.
+ * Comparing a status against a bare string literal is therefore a bug, and a
+ * greppable one.
  */
 
-/** `meals.status` — see PRD §8. */
-export const MEAL_STATUS = {
-  PENDING: 'pending',
-  ANALYZING: 'analyzing',
-  NEEDS_REVIEW: 'needs_review',
-  CONFIRMED: 'confirmed',
-  FAILED: 'failed',
-}
+export {
+  DAY_STATUS,
+  DAY_STATUS_VALUES,
+  EXPORT_FORMAT,
+  GOAL_TYPE,
+  GOAL_TYPE_VALUES,
+  GRAMS_SOURCE,
+  MACRO_SOURCE,
+  MEAL_EVENT_KIND,
+  MEAL_STATUS,
+  MEAL_STATUS_VALUES,
+  NAME_SOURCE,
+  SEX,
+  SEX_VALUES,
+  WEIGHT_SOURCE,
+} from '@/lib/generated/enums'
 
-/** `meals.name_source` — which input path supplied the dish name (§8). */
-export const NAME_SOURCE = {
-  VISION: 'vision',
-  RECENT_CHIP: 'recent_chip',
-  SHARE_INTENT: 'share_intent',
-  COMMENT: 'comment',
-  MANUAL: 'manual',
-}
+import { GOAL_TYPE, MEAL_STATUS, SEX } from '@/lib/generated/enums'
 
-/** `user_profiles.sex` — required by Mifflin-St Jeor (§6). */
-export const SEX = {
-  MALE: 'male',
-  FEMALE: 'female',
-}
-
-/** `user_profiles.goal_type`. */
-export const GOAL_TYPE = {
-  LOSE: 'lose',
-  MAINTAIN: 'maintain',
-  GAIN: 'gain',
-}
-
-/** `weight_logs.source`. */
-export const WEIGHT_SOURCE = {
-  MANUAL: 'manual',
-  ONBOARDING: 'onboarding',
-  IMPORT: 'import',
-  SCALE: 'scale',
-}
+// --- Derived: presentation and predicates -----------------------------------
+//
+// These are *choices*, not contract. The spec says which values exist; it does
+// not say which of them count as "in flight", or what to call them in a form.
 
 /** Options for the profile form's sex selector. */
 export const SEX_OPTIONS = [
