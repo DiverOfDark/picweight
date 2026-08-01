@@ -8,12 +8,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,6 +58,49 @@ fun ErrorBanner(message: String, modifier: Modifier = Modifier) {
             text = message,
             color = MaterialTheme.colorScheme.onErrorContainer,
             style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+/**
+ * The one control that makes a failed meal actionable instead of a tombstone.
+ *
+ * A filled button rather than an icon or a text link: everywhere else in a day list a row
+ * is something to read, so the affordance has to announce itself as the exception. It
+ * disables *and* relabels itself while the request is in flight — a frustrated user
+ * double-taps, and although [MealRetries] already refuses the second tap and the server
+ * answers 409 to a duplicate, a button that still looks pressable is a button that
+ * gets pressed again.
+ */
+@Composable
+fun RetryButton(
+    retrying: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Button(
+        onClick = onRetry,
+        enabled = !retrying,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    ) {
+        if (retrying) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = LocalContentColor.current,
+            )
+        } else {
+            Icon(
+                Icons.Outlined.Refresh,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (retrying) "Retrying…" else "Retry",
+            style = MaterialTheme.typography.labelLarge,
         )
     }
 }

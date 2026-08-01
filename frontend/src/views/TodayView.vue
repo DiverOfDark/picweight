@@ -153,8 +153,13 @@ onMounted(load)
               Passing the offset as it stands *now* slid every row by an hour
               once the clocks changed.
             -->
-            <SittingRow v-if="entry.kind === 'group'" :group="entry.group" />
-            <MealRow v-else :meal="entry.meal" />
+            <SittingRow v-if="entry.kind === 'group'" :group="entry.group" @retried="load()" />
+            <!--
+              A retried meal is back to `pending`, so the row has to stop
+              claiming it failed straight away. The result itself lands over
+              SSE like any other analysis.
+            -->
+            <MealRow v-else :meal="entry.meal" @retried="load()" />
           </template>
         </div>
 

@@ -944,6 +944,196 @@ pub async fn reanalyze_meal(
     ))
 }
 
+/// `POST /api/v1/meals/{id}/retry` — re-run a failed analysis.
+#[utoipa::path(
+    post,
+    path = "/api/v1/meals/{id}/retry",
+    tag = "meals",
+    summary = "Retry a failed analysis",
+    description = "Re-runs the estimation agent for a meal whose analysis \
+failed — a quota-exhausted key, a rate limit, a provider hiccup. Nothing is \
+needed from the client: the 768px thumbnail is already stored server-side, so \
+the retry re-reads the same image. The job is enqueued at the **same revision** \
+— this is another attempt at the same estimate, not a correction — and the \
+failure reason stops being reported the moment the meal leaves `failed`. \
+Returns 202; the result arrives over SSE or by polling, as for any analysis.",
+    params(("id" = String, Path, description = "Meal id")),
+    responses(
+        (status = 202, description = "Accepted; the analysis was re-enqueued at the same revision", body = MealAcceptedResponse),
+        (status = 401, description = "Not authenticated", body = crate::error::ErrorBody),
+        (status = 404, description = "No such meal for this user", body = crate::error::ErrorBody),
+        (status = 409, description = "The meal did not fail, or an analysis for it is already queued or running", body = crate::error::ErrorBody),
+    ),
+    security(("session" = []))
+)]
+pub async fn retry_meal(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> Result<(StatusCode, Json<MealAcceptedResponse>), AppError> {
+    let user_id = user.id.clone();
+    let meal_id = id.clone();
+    let now = Utc::now().naive_utc();
+    let model = state.agent.model().to_string();
+
+    let accepted = state
+        .interact(move |conn| enqueue_retry(conn, &user_id, &meal_id, &model, now))
+        .await?;
+
+    state.jobs.enqueue(accepted.job)?;
+
+    let mut event =
+        MealEvent::new(&user.id, MealEventKind::Queued).with_meal(&id, accepted.revision);
+    if let Some(gid) = &accepted.group_id {
+        event = event.with_group(gid);
+    }
+    event.status = Some(MealStatus::Pending);
+    event.dish_name = accepted.dish_name;
+    state.events.publish(event);
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(MealAcceptedResponse {
+            meal_id: id,
+            status: MealStatus::Pending,
+            revision: accepted.revision,
+            // A retry is never a deduplicated upload; the field exists for the
+            // ingest path and is always false here.
+            deduplicated: false,
+        }),
+    ))
+}
+
+/// What [`retry_meal`] needs once its transaction has committed.
+#[derive(Debug, Clone)]
+pub struct RetryAccepted {
+    /// The work to hand the analysis queue.
+    pub job: Job,
+    /// The revision the retry re-runs — unchanged by design.
+    pub revision: i32,
+    /// The sitting this meal belongs to, for the event payload.
+    pub group_id: Option<String>,
+    /// Dish name as stored, for the event payload.
+    pub dish_name: Option<String>,
+}
+
+/// The database half of [`retry_meal`], in one transaction.
+///
+/// Split out so the rules are testable without an [`AppState`] — which needs a
+/// live IdP and a provider key — and so status validation, the duplicate check
+/// and both writes commit or roll back together.
+///
+/// Three rules, in order:
+///
+/// 1. **Only a `failed` meal may be retried.** Anything else is a 409: retrying
+///    a confirmed meal is meaningless, and answering 202 would hide a client bug
+///    instead of surfacing it.
+/// 2. **Never enqueue a second live job.** A frustrated double-tap would
+///    otherwise run two loops over one photo, at twice the spend, racing to
+///    write the same revision.
+/// 3. **Same revision.** A retry is another attempt at the same estimate, not a
+///    correction — see `meal_revisions`, where the newest job at a revision wins
+///    for exactly this reason. `persist_outcome` replaces the items at that
+///    revision, so a successful retry leaves no trace of the failed attempt in
+///    the meal itself.
+///
+/// The failure reason lives on `analysis_jobs.error`, not on `meals` — there is
+/// no such column — and is only surfaced while the meal is `failed` (see
+/// [`build_meal_responses`]). Moving the meal back to `pending` is therefore
+/// what clears it for every reader, while the failed job row is kept as the
+/// audit record of *why* the first attempt died.
+pub fn enqueue_retry(
+    conn: &mut SqliteConnection,
+    user_id: &str,
+    meal_id: &str,
+    model: &str,
+    now: NaiveDateTime,
+) -> Result<RetryAccepted, AppError> {
+    conn.transaction::<_, AppError, _>(|conn| {
+        // User-scoped, so another user's meal is a 404 and is never retried.
+        let meal = load_owned_meal(conn, user_id, meal_id)?;
+
+        let status = meal.status()?;
+        if status != MealStatus::Failed {
+            return Err(AppError::Conflict(format!(
+                "only a failed meal can be retried; this one is {status}"
+            )));
+        }
+
+        let live: i64 = analysis_jobs::table
+            .filter(analysis_jobs::meal_id.eq(&meal.id))
+            .filter(analysis_jobs::status.eq_any([
+                JobStatus::Queued.as_str(),
+                JobStatus::Running.as_str(),
+            ]))
+            .count()
+            .get_result(conn)?;
+        if live > 0 {
+            return Err(AppError::Conflict(
+                "an analysis for this meal is already queued or running".to_string(),
+            ));
+        }
+
+        // The attempt this one follows, so the chain stays readable end to end.
+        let parent_job_id: Option<String> = analysis_jobs::table
+            .filter(analysis_jobs::meal_id.eq(&meal.id))
+            .order((
+                analysis_jobs::revision.desc(),
+                analysis_jobs::created_at.desc(),
+            ))
+            .select(analysis_jobs::id)
+            .first::<String>(conn)
+            .optional()?;
+
+        let job_id = uuid::Uuid::new_v4().to_string();
+        diesel::insert_into(analysis_jobs::table)
+            .values(&NewAnalysisJob {
+                id: job_id.clone(),
+                meal_id: meal.id.clone(),
+                revision: meal.revision,
+                parent_job_id,
+                status: JobStatus::Queued.as_str().to_string(),
+                attempts: 0,
+                model: model.to_string(),
+                // No feedback: this is a fresh analysis, not a correction turn.
+                // `recover_unfinished` reads exactly this column to tell the two
+                // apart, so a retry that outlives a restart comes back a retry.
+                user_feedback: None,
+                steps: 0,
+                tool_calls: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                cost_micro_usd: 0,
+                error: None,
+                started_at: None,
+                created_at: now,
+                finished_at: None,
+            })
+            .execute(conn)?;
+
+        diesel::update(meals::table.filter(meals::id.eq(&meal.id)))
+            .set(&MealChangeset {
+                status: Some(MealStatus::Pending.as_str().to_string()),
+                updated_at: Some(now),
+                ..Default::default()
+            })
+            .execute(conn)?;
+
+        Ok(RetryAccepted {
+            job: Job {
+                job_id,
+                meal_id: meal.id.clone(),
+                user_id: user_id.to_string(),
+                revision: meal.revision,
+                kind: JobKind::Analyze,
+            },
+            revision: meal.revision,
+            group_id: meal.group_id.clone(),
+            dish_name: meal.dish_name.clone(),
+        })
+    })
+}
+
 /// `GET /api/v1/meals/{id}/revisions` — revision history and its causes.
 #[utoipa::path(
     get,
@@ -2196,5 +2386,363 @@ mod tests {
         // portion_scale is 0.5 but the estimate is the agent's own figure —
         // scaling here would double-count on the next re-emit.
         assert_eq!(estimate.totals().kcal, 800.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /api/v1/meals/{id}/retry — the way back from `failed`.
+    //
+    // §5 requires a quota-exhausted key to fail the meal *loudly*. Without a
+    // retry that loudness is a dead end: the only escape is deleting the meal
+    // and re-photographing food that has since been eaten. The photo is not
+    // lost — only the analysis failed — so a retry re-runs the agent over data
+    // the server already holds.
+    // -----------------------------------------------------------------------
+
+    /// Insert an `analysis_jobs` row in whatever state a test needs.
+    fn seed_job_row(
+        conn: &mut SqliteConnection,
+        job_id: &str,
+        meal_id: &str,
+        revision: i32,
+        status: JobStatus,
+        error: Option<&str>,
+    ) {
+        diesel::insert_into(analysis_jobs::table)
+            .values(&NewAnalysisJob {
+                id: job_id.to_string(),
+                meal_id: meal_id.to_string(),
+                revision,
+                parent_job_id: None,
+                status: status.as_str().to_string(),
+                attempts: 3,
+                model: "gpt-4.1".into(),
+                user_feedback: None,
+                steps: 1,
+                tool_calls: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                cost_micro_usd: 0,
+                error: error.map(str::to_string),
+                started_at: None,
+                created_at: at(2026, 8, 1, 12, 1),
+                finished_at: error.map(|_| at(2026, 8, 1, 12, 2)),
+            })
+            .execute(conn)
+            .unwrap();
+    }
+
+    /// `(id, revision, status, user_feedback, parent_job_id)` for one meal,
+    /// oldest first.
+    #[allow(clippy::type_complexity)]
+    fn jobs_of(
+        conn: &mut SqliteConnection,
+        meal_id: &str,
+    ) -> Vec<(String, i32, String, Option<String>, Option<String>)> {
+        analysis_jobs::table
+            .filter(analysis_jobs::meal_id.eq(meal_id))
+            .order(analysis_jobs::created_at.asc())
+            .select((
+                analysis_jobs::id,
+                analysis_jobs::revision,
+                analysis_jobs::status,
+                analysis_jobs::user_feedback,
+                analysis_jobs::parent_job_id,
+            ))
+            .load(conn)
+            .unwrap()
+    }
+
+    /// The meal as a client would read it back.
+    fn read_back(conn: &mut SqliteConnection, user_id: &str, meal_id: &str) -> MealResponse {
+        let meal = load_owned_meal(conn, user_id, meal_id).unwrap();
+        build_meal_responses(conn, vec![meal])
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_failed_meal_retries_at_the_same_revision_with_exactly_one_new_job() {
+        let mut conn = test_conn();
+        seed_user(&mut conn, "u1");
+        seed_meal(
+            &mut conn,
+            "m1",
+            "u1",
+            at(2026, 8, 1, 12, 0),
+            180,
+            MealStatus::Failed,
+            1,
+            1.0,
+            None,
+        );
+        seed_job_row(
+            &mut conn,
+            "j1",
+            "m1",
+            1,
+            JobStatus::Failed,
+            Some("rate limited: insufficient_quota"),
+        );
+
+        // The reason is what tells the user whether retrying is worth anything.
+        let before = read_back(&mut conn, "u1", "m1");
+        assert_eq!(before.status, MealStatus::Failed);
+        assert_eq!(
+            before.error.as_deref(),
+            Some("rate limited: insufficient_quota")
+        );
+
+        let accepted =
+            enqueue_retry(&mut conn, "u1", "m1", "gpt-4.1", at(2026, 8, 1, 12, 5)).unwrap();
+        assert_eq!(accepted.revision, 1, "a retry re-runs the same revision");
+        assert_eq!(accepted.job.revision, 1);
+        assert_eq!(accepted.job.meal_id, "m1");
+        assert_eq!(accepted.job.user_id, "u1");
+        assert!(
+            matches!(accepted.job.kind, JobKind::Analyze),
+            "a retry is a fresh analysis, not a correction turn"
+        );
+
+        let meal = load_owned_meal(&mut conn, "u1", "m1").unwrap();
+        assert_eq!(meal.status().unwrap(), MealStatus::Pending);
+        assert_eq!(meal.revision, 1, "a retry must not open a new revision");
+
+        let jobs = jobs_of(&mut conn, "m1");
+        assert_eq!(jobs.len(), 2, "exactly one new job, not a second revision");
+        assert_eq!(jobs[1].0, accepted.job.job_id);
+        assert_eq!(jobs[1].1, 1);
+        assert_eq!(jobs[1].2, JobStatus::Queued.as_str());
+        assert_eq!(
+            jobs[1].3, None,
+            "no feedback: `recover_unfinished` reads this column to tell a \
+retry from a correction, so a restart must not turn one into the other"
+        );
+        assert_eq!(
+            jobs[1].4.as_deref(),
+            Some("j1"),
+            "the retry follows the attempt that failed, so the chain reads"
+        );
+
+        // The failure reason stops being reported the moment the meal leaves
+        // `failed` — there is no `meals.error` column to clear.
+        let after = read_back(&mut conn, "u1", "m1");
+        assert_eq!(after.status, MealStatus::Pending);
+        assert!(
+            after.error.is_none(),
+            "a retried meal must not still show the reason it failed"
+        );
+
+        // ...but the failed attempt keeps its reason, as the audit record.
+        let kept: Option<String> = analysis_jobs::table
+            .filter(analysis_jobs::id.eq("j1"))
+            .select(analysis_jobs::error)
+            .first(&mut conn)
+            .unwrap();
+        assert!(kept.unwrap_or_default().contains("insufficient_quota"));
+    }
+
+    #[test]
+    fn retrying_a_meal_that_did_not_fail_is_a_409_not_a_silent_success() {
+        let mut conn = test_conn();
+        seed_user(&mut conn, "u1");
+
+        for (id, status) in [
+            ("confirmed", MealStatus::Confirmed),
+            ("drafted", MealStatus::NeedsReview),
+            ("waiting", MealStatus::Pending),
+            ("running", MealStatus::Analyzing),
+        ] {
+            seed_meal(
+                &mut conn,
+                id,
+                "u1",
+                at(2026, 8, 1, 12, 0),
+                180,
+                status,
+                1,
+                1.0,
+                None,
+            );
+
+            let err =
+                enqueue_retry(&mut conn, "u1", id, "gpt-4.1", at(2026, 8, 1, 12, 5)).unwrap_err();
+            assert_eq!(
+                err.status(),
+                StatusCode::CONFLICT,
+                "retrying a {status} meal must be refused, not silently accepted"
+            );
+            assert!(
+                err.to_string().contains(status.as_str()),
+                "the 409 must say what the meal actually is: {err}"
+            );
+
+            assert!(
+                jobs_of(&mut conn, id).is_empty(),
+                "a refused retry must not enqueue anything for a {status} meal"
+            );
+            assert_eq!(
+                load_owned_meal(&mut conn, "u1", id).unwrap().status().unwrap(),
+                status,
+                "a refused retry must leave the meal exactly as it was"
+            );
+        }
+    }
+
+    #[test]
+    fn retrying_while_a_job_is_already_queued_or_running_does_not_create_a_second_job() {
+        let mut conn = test_conn();
+        seed_user(&mut conn, "u1");
+
+        // A frustrated double-tap on a failed row is exactly this case: two
+        // loops over one photo, at twice the spend, racing to write the same
+        // revision.
+        for (meal_id, job_id, live) in [
+            ("m-queued", "j-queued", JobStatus::Queued),
+            ("m-running", "j-running", JobStatus::Running),
+        ] {
+            seed_meal(
+                &mut conn,
+                meal_id,
+                "u1",
+                at(2026, 8, 1, 12, 0),
+                180,
+                MealStatus::Failed,
+                1,
+                1.0,
+                None,
+            );
+            seed_job_row(&mut conn, job_id, meal_id, 1, live, None);
+
+            let err = enqueue_retry(&mut conn, "u1", meal_id, "gpt-4.1", at(2026, 8, 1, 12, 5))
+                .unwrap_err();
+            assert_eq!(err.status(), StatusCode::CONFLICT, "{live:?}: {err}");
+
+            let jobs = jobs_of(&mut conn, meal_id);
+            assert_eq!(
+                jobs.len(),
+                1,
+                "a {live:?} job is already going to run; a second would duplicate it"
+            );
+            assert_eq!(jobs[0].0, job_id);
+            assert_eq!(
+                load_owned_meal(&mut conn, "u1", meal_id)
+                    .unwrap()
+                    .status()
+                    .unwrap(),
+                MealStatus::Failed,
+                "the refused retry must not have moved the meal either"
+            );
+        }
+    }
+
+    #[test]
+    fn another_users_failed_meal_is_a_404_and_is_not_retried() {
+        let mut conn = test_conn();
+        seed_user(&mut conn, "u1");
+        seed_user(&mut conn, "u2");
+        seed_meal(
+            &mut conn,
+            "m1",
+            "u1",
+            at(2026, 8, 1, 12, 0),
+            180,
+            MealStatus::Failed,
+            1,
+            1.0,
+            None,
+        );
+        seed_job_row(&mut conn, "j1", "m1", 1, JobStatus::Failed, Some("quota"));
+
+        let err = enqueue_retry(&mut conn, "u2", "m1", "gpt-4.1", at(2026, 8, 1, 12, 5))
+            .unwrap_err();
+        // 404, never 403: a 403 would confirm the id exists.
+        assert_eq!(err.status(), StatusCode::NOT_FOUND);
+        let miss = enqueue_retry(&mut conn, "u2", "nope", "gpt-4.1", at(2026, 8, 1, 12, 5))
+            .unwrap_err();
+        assert_eq!(err.to_string(), miss.to_string());
+
+        assert_eq!(
+            jobs_of(&mut conn, "m1").len(),
+            1,
+            "the other user's meal must not have been re-enqueued"
+        );
+        assert_eq!(
+            load_owned_meal(&mut conn, "u1", "m1").unwrap().status().unwrap(),
+            MealStatus::Failed
+        );
+
+        // The owner can still retry it.
+        assert!(enqueue_retry(&mut conn, "u1", "m1", "gpt-4.1", at(2026, 8, 1, 12, 6)).is_ok());
+    }
+
+    #[test]
+    fn a_retry_reuses_the_stored_thumbnail_rather_than_asking_for_the_photo_again() {
+        let root = tempfile::tempdir().unwrap();
+        let mut conn = test_conn();
+        seed_user(&mut conn, "u1");
+
+        // The upload succeeded (202) and stored the 768px derivative; only the
+        // analysis failed. That is the whole premise of the endpoint.
+        let mut buffer = image::RgbImage::new(64, 48);
+        for (x, y, pixel) in buffer.enumerate_pixels_mut() {
+            *pixel = image::Rgb([(x % 255) as u8, (y % 255) as u8, 90]);
+        }
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(buffer)
+            .write_to(&mut encoded, image::ImageFormat::Jpeg)
+            .unwrap();
+        let stored =
+            crate::storage::thumbs::store_from_bytes(root.path(), &encoded.into_inner()).unwrap();
+        let thumbnail = crate::storage::thumbs::upsert_thumbnail(&mut conn, "u1", &stored).unwrap();
+
+        seed_meal(
+            &mut conn,
+            "m1",
+            "u1",
+            at(2026, 8, 1, 12, 0),
+            180,
+            MealStatus::Failed,
+            1,
+            1.0,
+            None,
+        );
+        diesel::update(meals::table.filter(meals::id.eq("m1")))
+            .set(meals::thumbnail_id.eq(Some(thumbnail.id.clone())))
+            .execute(&mut conn)
+            .unwrap();
+        seed_job_row(&mut conn, "j1", "m1", 1, JobStatus::Failed, Some("quota"));
+
+        // What the failed job read.
+        let before = load_owned_meal(&mut conn, "u1", "m1").unwrap();
+        let path_before = crate::jobs::analyzer::resolve_image_path(&mut conn, root.path(), &before)
+            .unwrap()
+            .expect("the upload stored a thumbnail");
+
+        enqueue_retry(&mut conn, "u1", "m1", "gpt-4.1", at(2026, 8, 1, 12, 5)).unwrap();
+
+        // What the retried job will read: the same file, resolved the same way.
+        let after = load_owned_meal(&mut conn, "u1", "m1").unwrap();
+        assert_eq!(
+            after.thumbnail_id, before.thumbnail_id,
+            "a retry must not detach the photo it is going to re-read"
+        );
+        let path_after = crate::jobs::analyzer::resolve_image_path(&mut conn, root.path(), &after)
+            .unwrap()
+            .expect("the retried job still resolves an image");
+        assert_eq!(
+            path_after, path_before,
+            "the retry must re-read the stored 768px thumbnail, not need a re-upload"
+        );
+        assert!(
+            path_after.exists(),
+            "the file the retried job will open is still on disk"
+        );
+
+        let thumbnails_stored: i64 = thumbnails::table.count().get_result(&mut conn).unwrap();
+        assert_eq!(
+            thumbnails_stored, 1,
+            "nothing was re-derived: one photo, one stored derivative"
+        );
     }
 }

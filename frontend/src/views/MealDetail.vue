@@ -9,7 +9,7 @@
  * agent's own prior reasoning and costs one short turn, not another full loop.
  */
 import { computed, onMounted, ref, watch } from 'vue'
-import { MEAL_STATUS, isInFlight } from '@/lib/enums'
+import { MEAL_STATUS, hasFailed, isInFlight } from '@/lib/enums'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -28,6 +28,7 @@ import {
 import { api } from '@/lib/api'
 import { grams, kcal, label, localDateKey, localTime, percent, stamp, sumTotals } from '@/lib/format'
 import { useMealEvents } from '@/composables/useMealEvents'
+import RetryFailed from '@/components/RetryFailed.vue'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -55,6 +56,7 @@ const notice = ref('')
 const mealId = computed(() => route.params.id)
 const thumbnail = computed(() => (meal.value?.thumbnail_url ? api.thumbnailUrl(meal.value.id) : null))
 const analysing = computed(() => isInFlight(meal.value?.status))
+const failed = computed(() => hasFailed(meal.value?.status))
 
 async function load() {
   loading.value = true
@@ -193,6 +195,25 @@ async function saveItems() {
   }
 }
 
+// --- Retry after a failure --------------------------------------------------
+
+/**
+ * The 202 carries the new status and revision, so the page can stop calling
+ * the meal failed before the reload lands — which matters here, because
+ * Confirm and Edit key off `analysing` and must go dead the same instant.
+ */
+function retried(accepted) {
+  meal.value = {
+    ...meal.value,
+    status: accepted.status,
+    revision: accepted.revision,
+    error: null,
+  }
+  notice.value =
+    'Queued again at the same revision. The server still has the photo, so nothing had to be uploaded.'
+  load()
+}
+
 // --- Correction by conversation --------------------------------------------
 
 const feedback = ref('')
@@ -287,8 +308,16 @@ onMounted(load)
 
       <div class="tick-rule" aria-hidden="true" />
 
+      <!--
+        A failed analysis is not a dead end: the thumbnail is still on the
+        server, so the reason comes with the button that runs the agent over it
+        again — at the same revision, since this is another attempt at the same
+        estimate rather than a correction.
+      -->
+      <RetryFailed v-if="failed" :meal="meal" @retried="retried" />
+
       <p
-        v-if="meal.error"
+        v-else-if="meal.error"
         class="flex items-start gap-2 rounded-lg border border-critical/40 bg-critical/10 px-3 py-2 text-sm text-critical"
       >
         <TriangleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />

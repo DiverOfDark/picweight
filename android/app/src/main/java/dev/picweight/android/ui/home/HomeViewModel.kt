@@ -13,6 +13,8 @@ import dev.picweight.android.ui.common.ApiFailure
 import dev.picweight.android.ui.common.ApiFailures
 import dev.picweight.android.ui.common.FailureKind
 import dev.picweight.android.ui.common.MealImage
+import dev.picweight.android.ui.common.MealRetries
+import dev.picweight.android.ui.common.MealRetry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -77,7 +79,17 @@ data class HomeUiState(
      * an unknown answer never produces that claim.
      */
     val online: Boolean = true,
-)
+    /** `clientUuid`s whose retry is in flight — those rows' buttons are disabled. */
+    val retrying: Set<String> = emptySet(),
+    /** Why the last retry was refused, if it was. Separate from [error]: a refresh that
+     *  worked must not clear it, and a failed retry must not read as a failed refresh. */
+    val retryError: String? = null,
+) {
+    fun isRetrying(meal: MealEntity): Boolean = meal.clientUuid in retrying
+
+    /** Whether this row should offer the affordance at all. See [MealRetry]. */
+    fun canRetry(meal: MealEntity): Boolean = MealRetry.isRetryable(meal)
+}
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -91,22 +103,39 @@ class HomeViewModel @Inject constructor(
     private val refreshing = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
 
+    /**
+     * Retrying a failed analysis, per row. Owned here rather than in the screen so a
+     * recomposition — or a navigation to the meal and back — cannot forget that a request
+     * is already in flight and re-enable the button under the user's thumb.
+     */
+    private val retries = MealRetries(viewModelScope, TAG) { meals.retryAnalysis(it) }
+
+    /** Everything that is about the screen rather than about a meal. */
+    private data class Chrome(
+        val refreshing: Boolean,
+        val error: String?,
+        val online: Boolean,
+        val retries: MealRetries.State,
+    )
+
     val uiState: StateFlow<HomeUiState> = combine(
         meals.flowDayState(today),
         meals.flowForLocalDay(today),
         profile.me,
         authRepository.authExpired,
-        combine(refreshing, error, connectivity.online) { r, e, on -> Triple(r, e, on) },
-    ) { day, dayMeals, me, expired, (isRefreshing, err, isOnline) ->
+        combine(refreshing, error, connectivity.online, retries.state, ::Chrome),
+    ) { day, dayMeals, me, expired, chrome ->
         HomeUiState(
             day = day,
             rows = collapse(dayMeals),
             displayName = me?.user?.displayName ?: me?.user?.email,
             hasProfile = me == null || me.profile != null,
             authExpired = expired,
-            refreshing = isRefreshing,
-            error = err,
-            online = isOnline,
+            refreshing = chrome.refreshing,
+            error = chrome.error,
+            online = chrome.online,
+            retrying = chrome.retries.inFlight,
+            retryError = chrome.retries.error,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
@@ -137,6 +166,20 @@ class HomeViewModel @Inject constructor(
             refreshing.value = false
         }
     }
+
+    /**
+     * Re-runs the analysis for a meal the server marked failed.
+     *
+     * A second tap while the first is still in flight does nothing at all — [MealRetries]
+     * holds the key until the response lands, which is what stops a frustrated double tap
+     * from asking for two analyses of the same photo.
+     */
+    fun retry(meal: MealEntity) {
+        if (!MealRetry.isRetryable(meal)) return
+        retries.start(meal.clientUuid)
+    }
+
+    fun dismissRetryError() = retries.dismissError()
 
     /**
      * What to render for this meal — the local capture while it is still the only copy,

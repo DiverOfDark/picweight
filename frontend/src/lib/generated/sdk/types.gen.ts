@@ -1920,6 +1920,44 @@ export type ReanalyzeMealResponses = {
 
 export type ReanalyzeMealResponse = ReanalyzeMealResponses[keyof ReanalyzeMealResponses];
 
+export type RetryMealData = {
+    body?: never;
+    path: {
+        /**
+         * Meal id
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/meals/{id}/retry';
+};
+
+export type RetryMealErrors = {
+    /**
+     * Not authenticated
+     */
+    401: ErrorBody;
+    /**
+     * No such meal for this user
+     */
+    404: ErrorBody;
+    /**
+     * The meal did not fail, or an analysis for it is already queued or running
+     */
+    409: ErrorBody;
+};
+
+export type RetryMealError = RetryMealErrors[keyof RetryMealErrors];
+
+export type RetryMealResponses = {
+    /**
+     * Accepted; the analysis was re-enqueued at the same revision
+     */
+    202: MealAcceptedResponse;
+};
+
+export type RetryMealResponse = RetryMealResponses[keyof RetryMealResponses];
+
 export type MealRevisionsData = {
     body?: never;
     path: {

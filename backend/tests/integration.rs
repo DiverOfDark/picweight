@@ -573,6 +573,14 @@ async fn one_users_meal_is_invisible_to_another() {
         .await;
     assert_eq!(patched.status(), 404);
 
+    // A retry is a write like any other: another user's meal is a 404, and the
+    // status check must never run before the ownership check — a 409 here would
+    // confirm the id exists.
+    let retried = app
+        .post_json(&format!("/api/v1/meals/{meal_id}/retry"), &bob, json!({}))
+        .await;
+    assert_eq!(retried.status(), 404);
+
     let bobs_history: Vec<serde_json::Value> = app
         .get("/api/v1/meals", &bob)
         .await
@@ -857,6 +865,123 @@ async fn reanalyzing_a_meal_still_being_analyzed_is_refused() {
         matches!(response.status().as_u16(), 202 | 409),
         "unexpected status {}",
         response.status()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// §5 — retrying a failed analysis
+// ---------------------------------------------------------------------------
+
+/// §5 makes a quota-exhausted key **loud**: the meal goes to `failed` with a
+/// visible reason rather than stalling. Without a way back that loudness is a
+/// dead end — the only escape would be deleting the meal and re-photographing
+/// food that has since been eaten.
+///
+/// The photo is not lost. The upload returned 202 and the 768px thumbnail is
+/// stored server-side; only the *analysis* failed. So the retry re-runs the
+/// agent over data the server already holds, at the same revision, with nothing
+/// needed from the phone.
+#[tokio::test]
+async fn a_failed_meal_retries_and_reaches_needs_review() {
+    let app = TestApp::start().await;
+    let token = app.token("alice");
+    let photo = jpeg(1200, 900, 120);
+
+    // An unusable answer — an empty item list — exhausts the loop *and* the
+    // single-shot fallback, so the meal fails loudly (§5). This is the same
+    // shape the real device hit: the provider refused, the estimate never came.
+    app.llm.set_estimate(json!({
+        "dish_name": "",
+        "overall_confidence": 0.0,
+        "items": []
+    }));
+
+    let created: serde_json::Value = app
+        .upload_meal(&token, MealUpload::photo("uuid-retry", &photo))
+        .await
+        .json()
+        .await
+        .expect("body");
+    let meal_id = created["meal_id"].as_str().expect("meal id").to_string();
+
+    let failed = app.await_terminal(&token, &meal_id).await;
+    assert_eq!(failed["status"], "failed");
+    assert_eq!(failed["revision"], 1);
+    assert!(
+        !failed["error"].as_str().unwrap_or_default().is_empty(),
+        "the reason is what tells the user whether a retry is worth anything"
+    );
+    let calls_before_retry = app.llm.responses_calls.load(Ordering::SeqCst);
+
+    // The provider recovered — a new key, a reset quota, a passing hiccup.
+    app.llm.set_estimate(harness::default_estimate("Шаурма с курицей"));
+
+    let accepted = app
+        .post_json(&format!("/api/v1/meals/{meal_id}/retry"), &token, json!({}))
+        .await;
+    assert_eq!(accepted.status(), 202, "a retry is asynchronous like any analysis");
+    let accepted: serde_json::Value = accepted.json().await.expect("accepted body");
+    assert_eq!(accepted["meal_id"], meal_id);
+    assert_eq!(
+        accepted["status"], "pending",
+        "the client updates optimistically from this"
+    );
+    assert_eq!(
+        accepted["revision"], 1,
+        "a retry re-runs the same revision, it is not a correction"
+    );
+
+    // The analysis actually runs, against the stored thumbnail.
+    let retried = app.await_terminal(&token, &meal_id).await;
+    assert_eq!(
+        retried["status"], "needs_review",
+        "the retried analysis must produce a draft, not stay failed"
+    );
+    assert_eq!(retried["revision"], 1, "still the same revision");
+    assert!(
+        retried["error"].is_null(),
+        "a meal that is no longer failed must not still report why it once was"
+    );
+    assert_eq!(retried["dish_name"], "Шаурма с курицей");
+    assert_eq!(retried["items"].as_array().expect("items").len(), 3);
+    let kcal = retried["totals"]["kcal"].as_f64().expect("kcal");
+    assert!((kcal - 780.0).abs() < 0.5, "totals sum the items: {kcal}");
+    assert!(
+        app.llm.responses_calls.load(Ordering::SeqCst) > calls_before_retry,
+        "the retry must actually re-run the agent, not just flip a status"
+    );
+
+    // Nothing was re-uploaded: the derivative the first attempt read is still
+    // the one being served (§7 — it is both display asset and agent input).
+    let thumb = app
+        .get(&format!("/api/v1/meals/{meal_id}/thumbnail"), &token)
+        .await;
+    assert_eq!(thumb.status(), 200);
+
+    // One revision, not two: the retry replaced the failed attempt in place.
+    let revisions: serde_json::Value = app
+        .get(&format!("/api/v1/meals/{meal_id}/revisions"), &token)
+        .await
+        .json()
+        .await
+        .expect("revisions");
+    assert_eq!(
+        revisions["revisions"].as_array().expect("revision list").len(),
+        1,
+        "a retry must not open a second revision"
+    );
+
+    // And now that it succeeded, retrying again is refused rather than quietly
+    // burning another loop.
+    let again = app
+        .post_json(&format!("/api/v1/meals/{meal_id}/retry"), &token, json!({}))
+        .await;
+    assert_eq!(again.status(), 409);
+    let body: serde_json::Value = again.json().await.expect("conflict body");
+    assert_eq!(body["error"], "conflict");
+    assert!(
+        body["message"].as_str().unwrap_or_default().contains("failed"),
+        "the 409 must say what the rule is: {body}"
     );
 }
 

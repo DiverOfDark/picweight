@@ -358,16 +358,7 @@ fn context_for(
 ) -> Result<AnalysisContext, AppError> {
     // Images are re-attached from disk on every run (§5 caveats), so the worker
     // resolves the path rather than trusting anything in a serialized thread.
-    let image_path = match &meal.thumbnail_id {
-        None => None,
-        Some(thumbnail_id) => match crate::storage::thumbs::find_by_id(conn, thumbnail_id)? {
-            None => None,
-            Some(thumbnail) => Some(crate::storage::thumbs::absolute_path(
-                &state.config.thumbs_root(),
-                &thumbnail.path,
-            )?),
-        },
-    };
+    let image_path = resolve_image_path(conn, &state.config.thumbs_root(), meal)?;
 
     Ok(AnalysisContext {
         user_id: meal.user_id.clone(),
@@ -381,6 +372,33 @@ fn context_for(
         recent_dishes: recent_confirmed_dishes(conn, &meal.user_id, RECENT_DISHES)?,
         calibration_factor: calibration_factor(conn, &meal.user_id)?,
     })
+}
+
+/// Resolve the on-disk path of a meal's stored 768px thumbnail.
+///
+/// Returns `None` for a manual entry, and also for a meal whose thumbnail row
+/// has gone (a shared derivative pruned by a concurrent delete) — an analysis
+/// without an image is degraded, not a failure.
+///
+/// This is why a **retry** never needs the photo again: the upload already
+/// stored the derivative and `meals.thumbnail_id` still points at it, so a
+/// re-run resolves exactly the same file the first attempt read (§7 — the 768px
+/// thumbnail is both the display asset and a valid re-analysis input).
+pub fn resolve_image_path(
+    conn: &mut SqliteConnection,
+    thumbs_root: &std::path::Path,
+    meal: &Meal,
+) -> Result<Option<std::path::PathBuf>, AppError> {
+    let Some(thumbnail_id) = meal.thumbnail_id.as_deref() else {
+        return Ok(None);
+    };
+    match crate::storage::thumbs::find_by_id(conn, thumbnail_id)? {
+        None => Ok(None),
+        Some(thumbnail) => Ok(Some(crate::storage::thumbs::absolute_path(
+            thumbs_root,
+            &thumbnail.path,
+        )?)),
+    }
 }
 
 /// Load a meal or report it missing.

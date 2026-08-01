@@ -110,6 +110,19 @@ interface PicweightApi {
         @Body request: ReanalyzeRequest,
     ): MealAcceptedResponse
 
+    /**
+     * Re-runs the estimation agent for a meal whose analysis *failed* — an exhausted
+     * quota, a rate limit, a provider hiccup.
+     *
+     * No body, and nothing is needed from the phone: the upload already succeeded and the
+     * server still holds the 768px thumbnail, so this is a second attempt at the **same
+     * revision** rather than a correction. 409 when the meal is not `failed`, or when an
+     * analysis for it is already queued or running — which is exactly what a double tap
+     * would provoke, and why the button disables itself.
+     */
+    @POST("api/v1/meals/{id}/retry")
+    suspend fun retryMeal(@Path("id") id: String): MealAcceptedResponse
+
     @GET("api/v1/meals/{id}/revisions")
     suspend fun mealRevisions(@Path("id") id: String): RevisionsResponse
 

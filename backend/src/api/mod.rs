@@ -57,6 +57,7 @@ a server-side estimation agent returns calories and macros.",
         meals::patch_meal,
         meals::delete_meal,
         meals::reanalyze_meal,
+        meals::retry_meal,
         meals::meal_revisions,
         meals::get_meal_thumbnail,
         events::meal_events,
@@ -246,6 +247,9 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/meals/{id}/reanalyze",
             post(meals::reanalyze_meal),
         )
+        // The one way back from `failed`. The photo is not lost — only the
+        // analysis failed — so this needs no body at all.
+        .route("/api/v1/meals/{id}/retry", post(meals::retry_meal))
         .route("/api/v1/meals/{id}/revisions", get(meals::meal_revisions))
         // Sittings
         .route("/api/v1/groups/{group_id}", get(groups::get_group))
@@ -295,6 +299,7 @@ mod tests {
             "/api/v1/meals",
             "/api/v1/meals/{id}",
             "/api/v1/meals/{id}/reanalyze",
+            "/api/v1/meals/{id}/retry",
             "/api/v1/meals/{id}/revisions",
             "/api/v1/meals/events",
             "/api/v1/groups/{group_id}",

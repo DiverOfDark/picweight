@@ -7,6 +7,14 @@ budget, the history with thumbnails, the weight and macro trends, the profile
 and targets, the export, and the agent-reasoning inspector where you can tell a
 bad estimate what is wrong and watch the revision it produces.
 
+A meal whose analysis failed is the one row here that is actionable rather than
+informational: `RetryFailed` puts the failure reason and a Retry button
+together, on the day list, in history and on the meal itself. The reason is half
+the affordance — "you exceeded your current quota" is worth another tap and "the
+image could not be decoded" never will be. Retry re-runs the agent at the same
+revision against the thumbnail the server already stores, so nothing is asked of
+a phone whose photo is of food that has since been eaten.
+
 ## Running it
 
 ```bash

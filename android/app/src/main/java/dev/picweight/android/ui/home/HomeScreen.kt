@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -47,6 +48,7 @@ import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.MacroBar
 import dev.picweight.android.ui.common.MacroColors
 import dev.picweight.android.ui.common.MealStatusCopy
+import dev.picweight.android.ui.common.RetryButton
 import dev.picweight.android.ui.common.asWhole
 import dev.picweight.android.ui.update.UpdateBanner
 import java.time.Instant
@@ -161,6 +163,21 @@ fun HomeScreen(
                 item { Box(Modifier.padding(16.dp)) { ErrorBanner(it) } }
             }
 
+            // A refused retry gets its own line rather than sharing the refresh banner:
+            // it is a different request, and the reason ("no longer failed", "409") only
+            // makes sense next to the button that caused it.
+            state.retryError?.let {
+                item {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(Modifier.weight(1f)) { ErrorBanner(it) }
+                        TextButton(onClick = viewModel::dismissRetryError) { Text("OK") }
+                    }
+                }
+            }
+
             item { HorizontalDivider() }
 
             if (state.rows.isEmpty()) {
@@ -185,6 +202,9 @@ fun HomeScreen(
                         meal = row.meal,
                         thumbnailModel = viewModel.thumbnailModel(row.meal),
                         online = state.online,
+                        canRetry = state.canRetry(row.meal),
+                        retrying = state.isRetrying(row.meal),
+                        onRetry = { viewModel.retry(row.meal) },
                         onClick = { onMealClick(row.meal.clientUuid) },
                     )
 
@@ -192,6 +212,9 @@ fun HomeScreen(
                         row = row,
                         thumbnailModel = { viewModel.thumbnailModel(it) },
                         online = state.online,
+                        canRetry = state::canRetry,
+                        retrying = state::isRetrying,
+                        onRetry = viewModel::retry,
                         onMealClick = onMealClick,
                     )
                 }
@@ -224,72 +247,100 @@ private fun OnboardingPrompt(onProfile: () -> Unit) {
     }
 }
 
+/**
+ * One meal in the day list.
+ *
+ * Informational in every state but one. A meal the server failed to analyse is the single
+ * case where the row is something to *act on*, so it carries a real button and the reason
+ * beside it — the reason is what decides whether acting is worth anything at all
+ * ("your quota is done": yes; "the image was rejected": no).
+ */
 @Composable
 private fun MealRow(
     meal: MealEntity,
     thumbnailModel: Any?,
     online: Boolean,
+    canRetry: Boolean,
+    retrying: Boolean,
+    onRetry: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(52.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (thumbnailModel != null) {
-                AsyncImage(
-                    model = thumbnailModel,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (thumbnailModel != null) {
+                    AsyncImage(
+                        model = thumbnailModel,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        Icons.Filled.PhotoCamera,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Spacer(Modifier.size(12.dp))
+
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = meal.dishName ?: MealStatusCopy.title(meal, online),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Medium,
                 )
-            } else {
-                Icon(
-                    Icons.Filled.PhotoCamera,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                val subtitle = when {
+                    meal.status == LocalMealStatus.FAILED || meal.status.isInFlight ->
+                        MealStatusCopy.detail(meal, online)
+
+                    else -> "${localTime(meal)} · ${meal.proteinG.asWhole()}P " +
+                        "${meal.fatG.asWhole()}F ${meal.carbsG.asWhole()}C"
+                }
+                // The failure reason, in full. It is the only input the user has to the
+                // decision the Retry button asks them to make, so it is not truncated
+                // here the way a dish list is.
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (MealStatusCopy.isProblem(meal)) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            if (!meal.status.isInFlight && meal.status != LocalMealStatus.FAILED) {
+                Spacer(Modifier.size(8.dp))
+                Text(
+                    text = "${meal.kcal.asWhole()} kcal",
+                    style = MaterialTheme.typography.titleSmall,
                 )
             }
         }
 
-        Spacer(Modifier.size(12.dp))
-
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = meal.dishName ?: MealStatusCopy.title(meal, online),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Medium,
-            )
-            val subtitle = when {
-                meal.status == LocalMealStatus.FAILED || meal.status.isInFlight ->
-                    MealStatusCopy.detail(meal, online)
-
-                else -> "${localTime(meal)} · ${meal.proteinG.asWhole()}P " +
-                    "${meal.fatG.asWhole()}F ${meal.carbsG.asWhole()}C"
+        // Its own line, under the reason it belongs to: a filled button squeezed against
+        // a wrapping error sentence is neither readable nor comfortably tappable.
+        if (canRetry) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                RetryButton(retrying = retrying, onRetry = onRetry)
             }
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (MealStatusCopy.isProblem(meal)) MaterialTheme.colorScheme.error
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        if (!meal.status.isInFlight && meal.status != LocalMealStatus.FAILED) {
-            Text(
-                text = "${meal.kcal.asWhole()} kcal",
-                style = MaterialTheme.typography.titleSmall,
-            )
         }
     }
 }
@@ -299,6 +350,9 @@ private fun SittingRow(
     row: DayRow.Sitting,
     thumbnailModel: (MealEntity) -> Any?,
     online: Boolean,
+    canRetry: (MealEntity) -> Boolean,
+    retrying: (MealEntity) -> Boolean,
+    onRetry: (MealEntity) -> Unit,
     onMealClick: (String) -> Unit,
 ) {
     Column(Modifier.padding(vertical = 4.dp)) {
@@ -328,13 +382,18 @@ private fun SittingRow(
             }
             Text("${row.kcal.asWhole()} kcal", style = MaterialTheme.typography.titleSmall)
         }
-        // Expanded per-dish rows: a correction has to reach one dish, not the sitting.
+        // Expanded per-dish rows: a correction — or a retry — has to reach one dish, not
+        // the sitting. Five photos are five independent agent loops (PRD §5), so exactly
+        // the one that ran out of quota is the one that gets asked again.
         row.meals.forEach { meal ->
             Row(Modifier.padding(start = 16.dp)) {
                 MealRow(
                     meal = meal,
                     thumbnailModel = thumbnailModel(meal),
                     online = online,
+                    canRetry = canRetry(meal),
+                    retrying = retrying(meal),
+                    onRetry = { onRetry(meal) },
                     onClick = { onMealClick(meal.clientUuid) },
                 )
             }

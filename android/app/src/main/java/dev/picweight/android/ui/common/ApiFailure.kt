@@ -48,8 +48,16 @@ enum class FailureKind {
     UNEXPECTED,
 }
 
-/** A classified failure and the one line the user should see for it. */
-data class ApiFailure(val kind: FailureKind, val message: String)
+/**
+ * A classified failure and the one line the user should see for it.
+ *
+ * [status] is the HTTP status when the server actually answered, and null otherwise. It
+ * is carried separately from [message] because some callers need to *branch* on a
+ * specific code rather than print it: a 409 from `POST /meals/{id}/retry` is not a
+ * malfunction — it means the row that was tapped is stale — and only the caller knows
+ * that. Parsing the digits back out of the sentence would be the alternative.
+ */
+data class ApiFailure(val kind: FailureKind, val message: String, val status: Int? = null)
 
 /**
  * Turns a thrown [Throwable] into an honest, user-facing sentence — and a logcat entry.
@@ -149,24 +157,36 @@ object ApiFailures {
         code == 401 || code == 403 -> ApiFailure(
             FailureKind.UNAUTHORIZED,
             "The server rejected this session (HTTP $code). Sign in again.",
+            code,
         )
 
         code == 404 -> ApiFailure(
             FailureKind.HTTP,
             "The server has no such endpoint or record (HTTP 404).",
+            code,
         )
 
         code == 408 || code == 429 -> ApiFailure(
             FailureKind.HTTP,
             "The server asked us to slow down (HTTP $code).",
+            code,
+        )
+
+        // A conflict is the server declining because the *state* moved, not because
+        // anything broke — whoever asked is holding a stale view of it.
+        code == 409 -> ApiFailure(
+            FailureKind.HTTP,
+            "That no longer applies — the server has moved on (HTTP 409).",
+            code,
         )
 
         code in 500..599 -> ApiFailure(
             FailureKind.HTTP,
             "The server failed on its side (HTTP $code).",
+            code,
         )
 
-        else -> ApiFailure(FailureKind.HTTP, "The server refused that (HTTP $code).")
+        else -> ApiFailure(FailureKind.HTTP, "The server refused that (HTTP $code).", code)
     }
 
     private fun isParseFailure(t: Throwable): Boolean =

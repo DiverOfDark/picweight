@@ -1025,6 +1025,74 @@
         ]
       }
     },
+    "/api/v1/meals/{id}/retry": {
+      "post": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Retry a failed analysis",
+        "description": "Re-runs the estimation agent for a meal whose analysis failed — a quota-exhausted key, a rate limit, a provider hiccup. Nothing is needed from the client: the 768px thumbnail is already stored server-side, so the retry re-reads the same image. The job is enqueued at the **same revision** — this is another attempt at the same estimate, not a correction — and the failure reason stops being reported the moment the meal leaves `failed`. Returns 202; the result arrives over SSE or by polling, as for any analysis.",
+        "operationId": "retry_meal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Accepted; the analysis was re-enqueued at the same revision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealAcceptedResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The meal did not fail, or an analysis for it is already queued or running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/meals/{id}/revisions": {
       "get": {
         "tags": [

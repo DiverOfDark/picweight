@@ -53,6 +53,7 @@ import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.local.MealItemEntity
 import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.MealStatusCopy
+import dev.picweight.android.ui.common.RetryButton
 import dev.picweight.android.ui.common.asWhole
 import kotlin.math.roundToInt
 
@@ -114,6 +115,21 @@ fun MealDetailScreen(
             }
 
             item { StatusHeader(meal, state.online) }
+
+            // A failed meal's whole screen is otherwise read-only, so the way out goes
+            // directly under the header, above the item list it does not have.
+            if (meal.status == LocalMealStatus.FAILED) {
+                item {
+                    FailedAnalysisCard(
+                        reason = MealStatusCopy.detail(meal, state.online),
+                        canRetry = state.canRetry,
+                        retrying = state.retrying,
+                        retryError = state.retryError,
+                        onRetry = viewModel::retry,
+                        onDismissError = viewModel::dismissRetryError,
+                    )
+                }
+            }
 
             state.error?.let { item { Box(Modifier.padding(16.dp)) { ErrorBanner(it) } } }
             state.message?.let {
@@ -247,13 +263,90 @@ private fun StatusHeader(meal: MealEntity, online: Boolean) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        meal.error?.let {
+        // A FAILED meal's reason is rendered by FailedAnalysisCard instead, beside the
+        // button that acts on it — printing it twice would just push the button off
+        // screen. A QUEUED meal whose upload keeps bouncing still carries one here.
+        meal.error?.takeIf { meal.status != LocalMealStatus.FAILED }?.let {
             Spacer(Modifier.height(8.dp))
             ErrorBanner(it)
         }
         meal.comment?.let {
             Spacer(Modifier.height(8.dp))
             Text("You said: $it", style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+/**
+ * The reason an analysis failed, and the way to try it again.
+ *
+ * The two belong in one block. "Your quota is done" is worth a tap; "the image was
+ * rejected" never will be — the reason is the entire basis for the decision, so a button
+ * shown without it would just be a slot machine. [canRetry] is false for the other kind
+ * of failure, an upload that gave up before the server ever saw the meal: there is no
+ * server-side analysis to re-run, and saying so is better than a button that 404s.
+ */
+@Composable
+private fun FailedAnalysisCard(
+    reason: String,
+    canRetry: Boolean,
+    retrying: Boolean,
+    retryError: String?,
+    onRetry: () -> Unit,
+    onDismissError: () -> Unit,
+) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.errorContainer)
+            .padding(12.dp),
+    ) {
+        Text(
+            "Analysis failed",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            reason,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+
+        if (canRetry) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                // Says why retrying is free: the user's instinct is that a failed meal
+                // has to be re-photographed, and by now the food is gone.
+                "The photo is still on the server — retrying re-runs the estimate on it, " +
+                    "nothing is uploaded again.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(12.dp))
+            RetryButton(retrying = retrying, onRetry = onRetry)
+        } else {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "This one never reached the server, so there is no analysis to re-run.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        }
+
+        retryError?.let {
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onDismissError) { Text("OK") }
+            }
         }
     }
 }

@@ -139,6 +139,14 @@ export const api = {
   reanalyze: (id, feedback) =>
     unwrap(sdk.reanalyzeMeal({ path: { id }, body: { feedback } })),
 
+  /**
+   * Re-run the agent on a meal whose analysis failed — same revision, same
+   * stored thumbnail, nothing asked of the phone. 409 when the meal did not
+   * fail or an attempt is already in flight; `unwrap` turns that into an
+   * `ApiError` carrying the server's own sentence.
+   */
+  retryMeal: (id) => unwrap(sdk.retryMeal({ path: { id } })),
+
   /** Revision history, newest first, with the feedback that caused each. */
   revisions: (id) => unwrap(sdk.mealRevisions({ path: { id } })),
 

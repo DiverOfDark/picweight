@@ -587,6 +587,45 @@ class MealRepository @Inject constructor(
         scheduler.enqueueEventStream()
     }
 
+    /**
+     * Asks the server to run the analysis again for a meal it marked `failed`.
+     *
+     * The photo is not re-sent and cannot be: the upload succeeded, the server kept the
+     * thumbnail, and only the agent run died. So this is a second attempt at the *same*
+     * revision — the server enqueues one job at `meals.revision` and answers 202 with the
+     * status and revision the client should show immediately.
+     *
+     * Nothing is caught here. A 409 ("this meal is not failed", "an analysis is already
+     * queued or running") is a fact the caller must be able to put on screen, and
+     * swallowing it would leave the row looking retried when it was not.
+     */
+    suspend fun retryAnalysis(clientUuid: String) {
+        val meal = dao.byClientUuid(clientUuid)
+            ?: throw IllegalStateException("This meal is no longer on this phone.")
+        // A meal can also be FAILED because its *upload* gave up, in which case the server
+        // has never heard of it and there is nothing to retry. The UI does not offer the
+        // button in that case (see MealRetry.isRetryable); this is the backstop.
+        val serverId = meal.serverId
+            ?: throw IllegalStateException("This meal never reached the server, so there is no analysis to retry.")
+
+        val accepted = api.retryMeal(serverId)
+        dao.upsert(
+            meal.copy(
+                status = LocalMealStatus.fromWire(accepted.status.value),
+                revision = accepted.revision,
+                // The reason lives on the failed job server-side; locally it is what the
+                // row was showing, and a meal that is analysing again must not still be
+                // captioned with why the last attempt died.
+                error = null,
+                // Re-arm the notification: this attempt gets to announce its own result.
+                notified = false,
+                updatedAt = System.currentTimeMillis(),
+            )
+        )
+        // PENDING with a server id is exactly what MealEventWorker waits on.
+        scheduler.enqueueEventStream()
+    }
+
     /** Deletes locally first so the row disappears immediately, then server-side. */
     suspend fun delete(clientUuid: String) {
         val meal = dao.byClientUuid(clientUuid) ?: return

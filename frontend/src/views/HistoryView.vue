@@ -10,9 +10,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { Layers, Utensils } from 'lucide-vue-next'
 import { api } from '@/lib/api'
+import { hasFailed } from '@/lib/enums'
 import { instantMs, kcal, localDateKey, localTime, relativeDayLabel, shiftDateKey, todayKey } from '@/lib/format'
+import { useMealEvents } from '@/composables/useMealEvents'
 import { Button } from '@/components/ui/button'
 import EmptyState from '@/components/EmptyState.vue'
+import RetryFailed from '@/components/RetryFailed.vue'
 
 const RANGES = [
   { days: 7, label: '7 days' },
@@ -26,8 +29,13 @@ const loading = ref(true)
 const error = ref('')
 const expanded = ref(new Set())
 
-async function load() {
-  loading.value = true
+/**
+ * @param {{quiet?: boolean}} [options] a quiet reload leaves the list on screen
+ *   and skips the loading line — right for a background refresh, wrong for a
+ *   range the user just asked for.
+ */
+async function load({ quiet = false } = {}) {
+  if (!quiet) loading.value = true
   error.value = ''
   try {
     meals.value = await api.meals({
@@ -41,6 +49,10 @@ async function load() {
     loading.value = false
   }
 }
+
+// A retry started from a history card finishes about half a minute later; the
+// stream is what turns that card from "failed" into a number without a reload.
+useMealEvents(() => load({ quiet: true }))
 
 function setRange(days) {
   range.value = days
@@ -98,6 +110,9 @@ const days = computed(() => {
 })
 
 const thumbnail = (meal) => (meal.thumbnail_url ? api.thumbnailUrl(meal.id) : null)
+
+/** A card that can be acted on: the photo is still on the server, so retry it. */
+const failed = (meal) => hasFailed(meal.status)
 
 onMounted(load)
 
@@ -180,53 +195,84 @@ onMounted(load)
 
           <!-- Expanded members follow their sitting in place -->
           <template v-if="card.kind === 'group' && expanded.has(card.id)">
-            <router-link
+            <div
               v-for="member in card.members"
               :key="member.id"
-              :to="{ name: 'meal', params: { id: member.id } }"
-              class="overflow-hidden rounded-lg border border-rule bg-black/20 transition-colors hover:border-ink-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              class="overflow-hidden rounded-lg border bg-black/20 transition-colors"
+              :class="failed(member) ? 'border-critical/40' : 'border-rule hover:border-ink-3'"
+            >
+              <router-link
+                :to="{ name: 'meal', params: { id: member.id } }"
+                class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div class="relative aspect-square w-full bg-black/40">
+                  <img
+                    v-if="thumbnail(member)"
+                    :src="thumbnail(member)"
+                    :alt="member.dish_name || 'Meal photo'"
+                    loading="lazy"
+                    class="size-full object-cover"
+                  >
+                  <Utensils v-else class="absolute inset-0 m-auto size-5 text-ink-3" aria-hidden="true" />
+                </div>
+                <div class="p-2">
+                  <p class="truncate text-xs font-medium text-ink">{{ member.dish_name || 'Unnamed' }}</p>
+                  <p class="num mt-0.5 text-[11px] text-ink-3">{{ kcal(member.totals.kcal) }} kcal</p>
+                </div>
+              </router-link>
+
+              <RetryFailed
+                v-if="failed(member)"
+                :meal="member"
+                compact
+                class="m-1.5 mt-0"
+                @retried="load({ quiet: true })"
+              />
+            </div>
+          </template>
+
+          <!-- A solo meal -->
+          <div
+            v-if="card.kind === 'meal'"
+            class="overflow-hidden rounded-lg border bg-black/20 transition-colors"
+            :class="failed(card.meal) ? 'border-critical/40' : 'border-border hover:border-rule'"
+          >
+            <router-link
+              :to="{ name: 'meal', params: { id: card.meal.id } }"
+              class="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <div class="relative aspect-square w-full bg-black/40">
                 <img
-                  v-if="thumbnail(member)"
-                  :src="thumbnail(member)"
-                  :alt="member.dish_name || 'Meal photo'"
+                  v-if="thumbnail(card.meal)"
+                  :src="thumbnail(card.meal)"
+                  :alt="card.meal.dish_name || 'Meal photo'"
                   loading="lazy"
                   class="size-full object-cover"
                 >
                 <Utensils v-else class="absolute inset-0 m-auto size-5 text-ink-3" aria-hidden="true" />
+                <span class="num absolute left-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] text-ink-2">
+                  {{ localTime(card.meal.eaten_at, card.meal.timezone_offset) }}
+                </span>
               </div>
               <div class="p-2">
-                <p class="truncate text-xs font-medium text-ink">{{ member.dish_name || 'Unnamed' }}</p>
-                <p class="num mt-0.5 text-[11px] text-ink-3">{{ kcal(member.totals.kcal) }} kcal</p>
+                <p class="truncate text-xs font-medium text-ink">{{ card.meal.dish_name || 'Unnamed' }}</p>
+                <p class="num mt-0.5 text-[11px] text-ink-3">{{ kcal(card.meal.totals.kcal) }} kcal</p>
               </div>
             </router-link>
-          </template>
 
-          <!-- A solo meal -->
-          <router-link
-            v-if="card.kind === 'meal'"
-            :to="{ name: 'meal', params: { id: card.meal.id } }"
-            class="overflow-hidden rounded-lg border border-border bg-black/20 transition-colors hover:border-rule focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <div class="relative aspect-square w-full bg-black/40">
-              <img
-                v-if="thumbnail(card.meal)"
-                :src="thumbnail(card.meal)"
-                :alt="card.meal.dish_name || 'Meal photo'"
-                loading="lazy"
-                class="size-full object-cover"
-              >
-              <Utensils v-else class="absolute inset-0 m-auto size-5 text-ink-3" aria-hidden="true" />
-              <span class="num absolute left-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[11px] text-ink-2">
-                {{ localTime(card.meal.eaten_at, card.meal.timezone_offset) }}
-              </span>
-            </div>
-            <div class="p-2">
-              <p class="truncate text-xs font-medium text-ink">{{ card.meal.dish_name || 'Unnamed' }}</p>
-              <p class="num mt-0.5 text-[11px] text-ink-3">{{ kcal(card.meal.totals.kcal) }} kcal</p>
-            </div>
-          </router-link>
+            <!--
+              The reason sits under the photo it belongs to. A quota failure is
+              worth another tap; an image the model refused is not, and the
+              sentence is the only thing that says which this was.
+            -->
+            <RetryFailed
+              v-if="failed(card.meal)"
+              :meal="card.meal"
+              compact
+              class="m-1.5 mt-0"
+              @retried="load({ quiet: true })"
+            />
+          </div>
         </template>
       </div>
     </section>

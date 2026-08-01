@@ -11,6 +11,7 @@ import { ref } from 'vue'
 import { ChevronDown, Layers, TriangleAlert } from 'lucide-vue-next'
 import { api } from '@/lib/api'
 import { grams, kcal, localTime } from '@/lib/format'
+import { useMealEvents } from '@/composables/useMealEvents'
 import MealRow from '@/components/MealRow.vue'
 
 const props = defineProps({
@@ -24,25 +25,48 @@ const props = defineProps({
   timezoneOffset: { type: Number, default: null },
 })
 
+/** A retry inside the sitting; the day around it reloads too. */
+const emit = defineEmits(['retried'])
+
 const expanded = ref(false)
 const members = ref([])
 const loading = ref(false)
 const error = ref('')
 
-async function toggle() {
-  expanded.value = !expanded.value
-  if (!expanded.value || members.value.length || loading.value) return
-
-  loading.value = true
+async function fetchMembers() {
   error.value = ''
   try {
     const sitting = await api.group(props.group.group_id)
     members.value = sitting.meals ?? []
   } catch (e) {
     error.value = e.message
-  } finally {
-    loading.value = false
   }
+}
+
+async function toggle() {
+  expanded.value = !expanded.value
+  if (!expanded.value || members.value.length || loading.value) return
+
+  loading.value = true
+  await fetchMembers()
+  loading.value = false
+}
+
+/**
+ * A member's retry, or its eventual result, has to reach the open sitting.
+ *
+ * The day reloads around this row on every event, but the member list is
+ * fetched here and keyed by group id, so a reload above leaves it untouched —
+ * an expanded dish would sit at "pending" forever otherwise.
+ */
+useMealEvents((event) => {
+  if (!expanded.value) return
+  if (members.value.some((meal) => meal.id === event.meal_id)) fetchMembers()
+})
+
+function retried(accepted) {
+  fetchMembers()
+  emit('retried', accepted)
 }
 </script>
 
@@ -98,7 +122,13 @@ async function toggle() {
     <div v-if="expanded" class="border-t border-border px-2 pb-1 pt-1">
       <p v-if="loading" class="px-2 py-3 text-xs text-ink-3">Loading the sitting…</p>
       <p v-else-if="error" class="px-2 py-3 text-xs text-critical">{{ error }}</p>
-      <MealRow v-for="meal in members" :key="meal.id" :meal="meal" nested />
+      <MealRow
+        v-for="meal in members"
+        :key="meal.id"
+        :meal="meal"
+        nested
+        @retried="retried"
+      />
     </div>
   </div>
 </template>

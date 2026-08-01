@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type ServerSentEventsResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, ClientVersionData, ClientVersionResponses, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
+import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, ClientVersionData, ClientVersionResponses, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, RetryMealData, RetryMealErrors, RetryMealResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -246,6 +246,17 @@ export const reanalyzeMeal = <ThrowOnError extends boolean = false>(options: Opt
         'Content-Type': 'application/json',
         ...options.headers
     }
+});
+
+/**
+ * Retry a failed analysis
+ *
+ * Re-runs the estimation agent for a meal whose analysis failed — a quota-exhausted key, a rate limit, a provider hiccup. Nothing is needed from the client: the 768px thumbnail is already stored server-side, so the retry re-reads the same image. The job is enqueued at the **same revision** — this is another attempt at the same estimate, not a correction — and the failure reason stops being reported the moment the meal leaves `failed`. Returns 202; the result arrives over SSE or by polling, as for any analysis.
+ */
+export const retryMeal = <ThrowOnError extends boolean = false>(options: Options<RetryMealData, ThrowOnError>): RequestResult<RetryMealResponses, RetryMealErrors, ThrowOnError> => (options.client ?? client).post<RetryMealResponses, RetryMealErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/meals/{id}/retry',
+    ...options
 });
 
 /**

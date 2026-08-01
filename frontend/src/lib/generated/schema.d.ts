@@ -378,6 +378,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/meals/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Retry a failed analysis
+         * @description Re-runs the estimation agent for a meal whose analysis failed — a quota-exhausted key, a rate limit, a provider hiccup. Nothing is needed from the client: the 768px thumbnail is already stored server-side, so the retry re-reads the same image. The job is enqueued at the **same revision** — this is another attempt at the same estimate, not a correction — and the failure reason stops being reported the moment the meal leaves `failed`. Returns 202; the result arrives over SSE or by polling, as for any analysis.
+         */
+        post: operations["retry_meal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/meals/{id}/revisions": {
         parameters: {
             query?: never;
@@ -2260,6 +2280,56 @@ export interface operations {
                 };
             };
             /** @description An analysis is already running for this meal */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    retry_meal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Meal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted; the analysis was re-enqueued at the same revision */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MealAcceptedResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description No such meal for this user */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description The meal did not fail, or an analysis for it is already queued or running */
             409: {
                 headers: {
                     [name: string]: unknown;

@@ -65,3 +65,12 @@ export function isTerminal(status) {
 export function isInFlight(status) {
   return status === MEAL_STATUS.PENDING || status === MEAL_STATUS.ANALYZING
 }
+
+/**
+ * A meal whose analysis failed — the one state in which a row is actionable
+ * rather than informational, because the photo is still on the server and the
+ * attempt can simply be made again.
+ */
+export function hasFailed(status) {
+  return status === MEAL_STATUS.FAILED
+}

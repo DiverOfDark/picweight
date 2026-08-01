@@ -13,6 +13,8 @@ import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.ui.common.ApiFailures
 import dev.picweight.android.ui.common.MealImage
+import dev.picweight.android.ui.common.MealRetries
+import dev.picweight.android.ui.common.MealRetry
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -41,7 +43,15 @@ data class MealDetailUiState(
     val deleted: Boolean = false,
     /** See `HomeUiState.online`: gates the "waiting for a connection" badge. */
     val online: Boolean = true,
-)
+    /** True while this meal's retry is in flight; the button is disabled meanwhile. */
+    val retrying: Boolean = false,
+    /** Why the last retry was refused. Kept apart from [error] so a failed retry does not
+     *  read as a failed edit, and so a later edit does not wipe it. */
+    val retryError: String? = null,
+) {
+    /** Whether this screen should offer the Retry affordance at all. See [MealRetry]. */
+    val canRetry: Boolean get() = meal != null && MealRetry.isRetryable(meal)
+}
 
 /**
  * One meal, and the two ways to fix it.
@@ -76,6 +86,12 @@ class MealDetailViewModel @Inject constructor(
     private val message = MutableStateFlow<String?>(null)
     private val deleted = MutableStateFlow(false)
 
+    /**
+     * Retrying the analysis. Held in the ViewModel, not the composable, so the button
+     * stays disabled across a recomposition or a rotation while the request is still out.
+     */
+    private val retries = MealRetries(viewModelScope, TAG) { meals.retryAnalysis(it) }
+
     private val mealFlow = clientUuid.flatMapLatest { uuid ->
         if (uuid == null) flowOf(null) else meals.flowMeal(uuid)
     }
@@ -88,8 +104,8 @@ class MealDetailViewModel @Inject constructor(
         itemsFlow,
         combine(feedback, showRevisions, revisions) { f, s, r -> Triple(f, s, r) },
         combine(busy, error, message) { b, e, m -> Triple(b, e, m) },
-        combine(deleted, connectivity.online) { d, on -> d to on },
-    ) { meal, items, (feedbackText, revisionsOpen, revisionList), (isBusy, err, msg), (isDeleted, isOnline) ->
+        combine(deleted, connectivity.online, retries.state) { d, on, r -> Triple(d, on, r) },
+    ) { meal, items, (feedbackText, revisionsOpen, revisionList), (isBusy, err, msg), (isDeleted, isOnline, retryState) ->
         MealDetailUiState(
             meal = meal,
             items = items,
@@ -101,6 +117,8 @@ class MealDetailViewModel @Inject constructor(
             message = msg,
             deleted = isDeleted,
             online = isOnline,
+            retrying = retryState.isRetrying(meal?.clientUuid),
+            retryError = retryState.error,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MealDetailUiState())
 
@@ -151,6 +169,21 @@ class MealDetailViewModel @Inject constructor(
             busy.value = false
         }
     }
+
+    /**
+     * Runs the analysis again for a meal the server marked failed (PRD §5).
+     *
+     * Nothing is re-uploaded — the server still has the thumbnail — so this is another
+     * attempt at the same revision. A second tap while the first is out is dropped by
+     * [MealRetries]; the button is disabled anyway, and the server would answer 409.
+     */
+    fun retry() {
+        val meal = uiState.value.meal ?: return
+        if (!MealRetry.isRetryable(meal)) return
+        retries.start(meal.clientUuid)
+    }
+
+    fun dismissRetryError() = retries.dismissError()
 
     /** Confirming is what feeds the flywheel: only confirmed meals are ever recalled. */
     fun confirm() {
