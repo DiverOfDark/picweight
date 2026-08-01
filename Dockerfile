@@ -29,6 +29,15 @@ COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 COPY frontend/ ./
+# The web client's SDK, types and enum constants are generated from the API's
+# own OpenAPI document, and `npm run build` regenerates them via its `prebuild`
+# hook. That hook reads ../android/openapi.json, so the spec has to be in the
+# context here — without it the build fails with ENOENT on
+# /app/android/openapi.json. Copying it also means the frontend baked into an
+# image always matches the spec in that same image, rather than trusting the
+# committed output. (npx resolves the generators from node_modules, so this
+# needs no network.)
+COPY android/openapi.json /app/android/openapi.json
 RUN PICWEIGHT_VERSION=${PICWEIGHT_VERSION} npm run build
 
 # ---------------------------------------------------------------------------
