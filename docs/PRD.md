@@ -95,14 +95,15 @@ The free-text comment stays — highest signal *when present* — but it's a bon
 
 ## 5. Estimation agent
 
-A **bounded agentic loop** server-side, built on **`rig-core`**.
+A **bounded agentic loop** server-side, built on **`rig` 0.41** (the facade crate; `rig-core` alone has no agent runtime — see [`docs/rig-spike.md`](./rig-spike.md), which resolves §14.3 with a GO).
 
 ### Why rig rather than hand-rolling
-- `Tool` trait gives typed `Args`/`Output` plus the JSON-schema `ToolDefinition` in one impl — no hand-written schemas drifting from the Rust types.
-- **`.multi_turn(n)` is exactly the bound this design needs.** Set `n = 6`; exceeding it surfaces `MaxDepthError`, which is the trigger for the single-shot fallback. The loop cap is a library guarantee, not something to reimplement and get wrong.
-- Extractors give typed structured output, and compose *as tools* inside a larger agent.
+- `Tool` trait gives typed `Args`/`Output` plus the JSON-schema `parameters()` in one impl — no hand-written schemas drifting from the Rust types.
+- **`.max_turns(n)` is exactly the bound this design needs.** Exceeding it surfaces `PromptError::MaxTurnsError`, which is the trigger for the single-shot fallback. The cap is a library guarantee, not something to reimplement and get wrong. **Note the unit: `max_turns` counts *model calls*, not tool calls** — a two-tool run costs three. `default_max_turns(6)` on the builder fits the five-step loop below.
+- `output_schema_raw` + `output_mode` give strict structured output; `Extractor` covers pure extraction.
+- **`Message` derives `Serialize`/`Deserialize`, and `AgentRunner::history()` accepts a restored thread** — which is what makes correction-by-conversation (below) a few lines rather than a project.
+- `AgentHook` fires on `ToolCall`/`ToolResult`, feeding `agent_steps` (§8) directly without stream parsing.
 - Provider-neutral, so the OpenAI dependency is swappable later.
-- Multi-turn streaming exposes each tool call and result — feeds `agent_steps` (§8) directly.
 
 *Accepted cost:* a framework dependency whose provider abstraction may lag OpenAI's newest features, plus version churn. Contained by keeping all loop logic behind the `backend/src/agent/` module boundary, so a swap to hand-rolled `async-openai` touches one directory. Evaluate `swiftide` only if rig's tool ergonomics disappoint — it is the heavier, RAG-oriented option and this workload is not RAG.
 
@@ -581,7 +582,7 @@ picweight/
 
 2. **Will the zero-keyboard paths actually get used?** Recent-chips and the share sheet are the answer to "I won't type comments". If `name_source` shows everything still arriving as `vision`, the accuracy ceiling is set by container-scale heuristics alone. Instrumented in M4 precisely so this is measurable — check after two weeks.
 
-3. **Does rig's OpenAI integration expose everything the loop needs** — image input, tool calling, strict JSON-schema structured output, and a **serializable/restorable message history** (session resume)? The last is load-bearing for §5 and the one frameworks most often leave underspecified. Verify in a spike during M1, before M3 depends on it. The `agent/` module boundary keeps a fallback to hand-rolled `async-openai` cheap, but finding out early is much cheaper than finding out late.
+3. ~~**Does rig's OpenAI integration expose everything the loop needs?**~~ **RESOLVED — see [`docs/rig-spike.md`](./rig-spike.md).** All four capabilities verified against rig 0.41 source: image input (`UserContent::Image`), tool calling (`Tool` trait), structured output (`output_schema_raw`), and serializable/restorable history (`Message: Serialize + Deserialize` + `AgentRunner::history`). Two corrections landed in §5: the dependency is the **`rig`** facade, not `rig-core`, and `max_turns` counts model calls rather than tool calls.
 
 4. **Is 90s the right debounce, and does the `group_size` hint survive the offline queue?** The hint is sent with the final shot, but WorkManager may deliver photos out of order, so the settler must handle the hint arriving before its members. If sittings routinely notify late in real use, the fix is a shorter debounce plus a foreground "done" signal — not a longer one.
 
