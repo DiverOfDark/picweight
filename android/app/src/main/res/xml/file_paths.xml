@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Captured photos live here until WorkManager has uploaded them. -->
+    <files-path name="captures" path="captures/" />
+    <external-files-path name="downloads" path="Download/" />
+</paths>

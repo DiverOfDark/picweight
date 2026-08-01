@@ -1,0 +1,23 @@
+{{/*
+Arbitrary manifests rendered alongside the release (PRD §10, goal G8).
+
+This is what replaces phos's hardcoded `externalsecret.yaml`. The chart never
+generates a Secret and never assumes an operator; instead the user drops whole
+manifests here — SealedSecret, ExternalSecret, a SOPS-decrypted Secret,
+NetworkPolicy, ServiceMonitor, anything — and the chart stays agnostic.
+
+Each entry goes through `tpl`, so it may call chart helpers and reach the
+release-derived names:
+
+    - apiVersion: bitnami.com/v1alpha1
+      kind: SealedSecret
+      metadata:
+        name: '{{ `{{ include "picweight.fullname" $ }}` }}-openai'
+
+Note the `$`: inside `range`, `.` is the list entry, so helpers that need the
+root context must be given `$`.
+*/}}
+{{- range .Values.additionalObjects }}
+---
+{{ tpl (toYaml .) $ }}
+{{- end }}

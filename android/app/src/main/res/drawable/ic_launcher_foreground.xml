@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="512"
+    android:viewportHeight="512">
+
+    <group
+        android:scaleX="0.82"
+        android:scaleY="0.82"
+        android:pivotX="256"
+        android:pivotY="256">
+
+        <!-- Budget ring track -->
+        <path
+            android:pathData="M256,66 A190,190 0,1,1 255.9,66 Z"
+            android:fillColor="#00000000"
+            android:strokeColor="#4a3a2c"
+            android:strokeWidth="26"
+            android:strokeAlpha="0.9"/>
+
+        <!-- Budget ring, ~70% consumed: the one number the app exists to show -->
+        <path
+            android:pathData="M256,66 A190,190 0,1,1 92.4,351.5"
+            android:fillColor="#00000000"
+            android:strokeWidth="26"
+            android:strokeLineCap="round">
+            <aapt:attr name="android:strokeColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="66" android:startY="66"
+                    android:endX="446" android:endY="446">
+                    <item android:offset="0" android:color="#FFFFC48A"/>
+                    <item android:offset="1" android:color="#FFF97316"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Plate -->
+        <path
+            android:pathData="M256,126 A130,130 0,1,1 255.9,126 Z"
+            android:fillColor="#FFF6EFE6"/>
+        <path
+            android:pathData="M256,158 A98,98 0,1,1 255.9,158 Z"
+            android:fillColor="#00000000"
+            android:strokeColor="#E0D3C2"
+            android:strokeWidth="4"/>
+
+        <!-- Food on the plate -->
+        <path
+            android:pathData="M196,246 A44,44 0,1,1 195.9,246 Z"
+            android:fillColor="#FFE8853A"/>
+        <path
+            android:pathData="M286,222 A34,34 0,1,1 285.9,222 Z"
+            android:fillColor="#FF7BA05B"/>
+        <path
+            android:pathData="M272,296 A30,30 0,1,1 271.9,296 Z"
+            android:fillColor="#FFC0492E"/>
+    </group>
+</vector>

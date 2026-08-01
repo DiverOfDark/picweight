@@ -1,0 +1,25 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "minimumReleaseAge": "14 days",
+  "packageRules": [
+    {
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "rig 0.41 split rig-core/rig-agent behind the facade (docs/rig-spike.md). Minor bumps have carried breaking renames, so they get reviewed by hand.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["rig", "rig-core", "rig-agent"],
+      "automerge": false
+    },
+    {
+      "description": "The Android SDK level, the Gradle openapi-generator and the JDK are pinned in three places at once (Dockerfile, CI, build.gradle.kts). Group them so a bump lands as one reviewable PR.",
+      "groupName": "android toolchain",
+      "matchManagers": ["gradle", "gradle-wrapper"],
+      "automerge": false
+    }
+  ]
+}

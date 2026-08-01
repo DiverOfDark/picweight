@@ -1,0 +1,51 @@
+picweight {{ .Chart.AppVersion }} — release {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+This chart NEVER creates a Secret. It references two by name, and the pod will
+stay in CreateContainerConfigError until both exist:
+
+  OIDC    {{ include "picweight.oidcSecretName" . }}
+          keys: {{ .Values.oidc.clientIdKey }}, {{ .Values.oidc.clientSecretKey }}{{ if .Values.oidc.mobileClientIdKey }}, {{ .Values.oidc.mobileClientIdKey }} (optional){{ end }}
+  OpenAI  {{ include "picweight.openaiSecretName" . }}
+          keys: {{ .Values.openai.apiKeyKey }}
+
+Create them with whatever you already run — sealed-secrets, External Secrets,
+SOPS, Vault Agent — either out-of-band or through `additionalObjects` in
+values.yaml (each entry is rendered with `tpl`, so it can call
+`{{ "{{" }} include "picweight.fullname" $ {{ "}}" }}`). Commented examples for both
+backends ship in values.yaml.
+
+Check:
+
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "picweight.oidcSecretName" . }} {{ include "picweight.openaiSecretName" . }}
+
+Reach it:
+{{- if .Values.ingress.enabled }}
+
+  https://{{ .Values.ingress.host }}/            web UI
+  https://{{ .Values.ingress.host }}/picweight.apk   Android APK
+  https://{{ .Values.ingress.host }}/api/docs    OpenAPI (Scalar)
+
+Register {{ include "picweight.oidcRedirectUri" . }} as the redirect URI of the
+confidential web client at {{ .Values.oidc.issuer }}.
+{{- else }}
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "picweight.fullname" . }} 33100:{{ .Values.service.port }}
+
+then open http://localhost:33100/.
+{{- if .Values.oidc.redirectUri }}
+
+Register {{ .Values.oidc.redirectUri }} as the redirect URI of the confidential
+web client at {{ .Values.oidc.issuer }}.
+{{- else }}
+
+Ingress is disabled and oidc.redirectUri is unset, so the redirect URI defaults
+to {{ include "picweight.oidcRedirectUri" . }} — from ingress.host, which is
+still the example value. Set ingress.enabled=true or oidc.redirectUri before
+logging in.
+{{- end }}
+{{- end }}
+
+Data ({{ .Values.picweight.dataPath }}: SQLite + thumbs/) lives on PVC
+{{ include "picweight.dataClaimName" . }}{{ if not .Values.persistence.existingClaim }}, annotated
+`helm.sh/resource-policy: keep` so an uninstall does not delete your food log{{ end }}.
+Back it up with rclone — see the README.

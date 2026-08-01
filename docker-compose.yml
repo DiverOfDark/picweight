@@ -1,0 +1,45 @@
+# Local development / self-host convenience. Production deploys go through the
+# Helm chart in helm/picweight (PRD §10).
+#
+#   export PICWEIGHT_OPENAI_API_KEY=sk-...
+#   docker compose up --build
+#
+# The image builds the SPA and the APK too, so the first build is slow; use
+# `cargo run` in backend/ + `npm run dev` in frontend/ for the inner loop.
+services:
+  picweight:
+    build:
+      context: .
+      args:
+        PICWEIGHT_VERSION: "${PICWEIGHT_VERSION:-dev}"
+    ports:
+      - "33100:33100"
+    volumes:
+      # SQLite (WAL) + the content-addressed thumbs/ tree. Back this up.
+      - ./data:/app/data
+    environment:
+      - RUST_LOG=info
+      - PICWEIGHT_DATA_PATH=/app/data
+
+      # --- OpenAI (required; §4 makes running without a key a non-goal) ------
+      # The key lives only in the backend. Clients never talk to OpenAI (§7).
+      - PICWEIGHT_OPENAI_API_KEY=${PICWEIGHT_OPENAI_API_KEY:?set PICWEIGHT_OPENAI_API_KEY}
+      #- PICWEIGHT_OPENAI_MODEL=gpt-4.1
+      # Point at LiteLLM / vLLM / Azure, or at a mock during testing.
+      #- PICWEIGHT_OPENAI_BASE_URL=https://api.openai.com/v1
+
+      # --- OIDC (required) ---------------------------------------------------
+      # Two clients, as in phos: a confidential web client and an optional
+      # public/native client for the Android app (PKCE, no secret).
+      - PICWEIGHT_OIDC_ISSUER=${PICWEIGHT_OIDC_ISSUER:?set PICWEIGHT_OIDC_ISSUER}
+      - PICWEIGHT_OIDC_CLIENT_ID=${PICWEIGHT_OIDC_CLIENT_ID:?set PICWEIGHT_OIDC_CLIENT_ID}
+      - PICWEIGHT_OIDC_CLIENT_SECRET=${PICWEIGHT_OIDC_CLIENT_SECRET:?set PICWEIGHT_OIDC_CLIENT_SECRET}
+      - PICWEIGHT_OIDC_MOBILE_CLIENT_ID=${PICWEIGHT_OIDC_MOBILE_CLIENT_ID:-}
+      - PICWEIGHT_OIDC_REDIRECT_URI=http://localhost:33100/api/auth/callback
+      #- PICWEIGHT_OIDC_SCOPES=openid profile email
+
+      # --- Optional ----------------------------------------------------------
+      #- PICWEIGHT_JWT_SECRET=  # auto-generated into data/.picweight_jwt_secret
+      #- PICWEIGHT_JWT_TTL=1209600
+      #- PICWEIGHT_WEB_SEARCH_ENABLED=false
+    restart: unless-stopped

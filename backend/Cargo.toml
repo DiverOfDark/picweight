@@ -1,0 +1,60 @@
+[package]
+name = "picweight-backend"
+version = "0.1.0"
+edition = "2021"
+description = "picweight — AI-assisted calorie & БЖУ tracker backend"
+license = "MIT"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+# `libsqlite3-sys` below is pinned with `bundled`, so SQLite is compiled into the
+# binary. The runtime container therefore needs NO `libsqlite3-0` package — only
+# `libssl3` + `ca-certificates` (see §10 of docs/PRD.md).
+diesel = { version = "2", features = ["sqlite", "r2d2", "chrono", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = "2"
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
+# The `rig` facade, not `rig-core`: rig 0.41 split the run loop out of the core
+# crate, so `Agent`/`AgentRunner` only exist behind this facade (docs/rig-spike.md).
+rig = { version = "0.41", features = ["agent", "derive"] }
+openidconnect = "4"
+# `rust_crypto` is NOT optional: jsonwebtoken 10 selects its cryptography via a
+# process-wide `CryptoProvider` chosen by crate feature, and with default
+# features only (`use_pem`) the built-in provider *panics* on the first
+# `encode`/`decode` — i.e. on every login. The RustCrypto backend costs nothing
+# in the dependency graph here: `openidconnect` already pulls in every crate it
+# needs (hmac, sha2, rsa, p256, p384, ed25519-dalek).
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+utoipa = { version = "5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-scalar = { version = "0.3", features = ["axum"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+image = "0.25"
+sha2 = "0.10"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+schemars = "1"
+tokio-stream = "0.1"
+futures-util = "0.3"
+mime_guess = "2"
+
+[dev-dependencies]
+tempfile = "3"
+# The PRD §13 integration suite boots the real router against a temp SQLite
+# file, a mock IdP and a mock LLM endpoint. Integration tests can only see the
+# crate's public API plus dev-dependencies, so the crates the harness itself
+# needs are restated here. Every one is already in the graph; only reqwest's
+# `multipart` feature is new, and dev-only under resolver 2.
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"] }
+serde_json = "1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+image = "0.25"

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">picweight</string>
+    <string name="meal_notification_channel_name">Meal analysis</string>
+    <string name="meal_notification_channel_description">Fires once per logged meal, the moment the estimate lands.</string>
+    <string name="upload_notification_channel_name">Uploads</string>
+    <string name="upload_notification_channel_description">Quiet progress for photos still waiting on a connection.</string>
+</resources>

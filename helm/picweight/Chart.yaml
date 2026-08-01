@@ -1,0 +1,19 @@
+apiVersion: v2
+name: picweight
+description: AI-assisted calorie & БЖУ tracker. Photograph what you eat; a server-side agent returns calories and macros.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - nutrition
+  - calories
+  - health
+  - ai
+  - self-hosted
+home: https://github.com/DiverOfDark/picweight
+sources:
+  - https://github.com/DiverOfDark/picweight
+maintainers:
+  - name: Kirill Orlov
+    url: https://github.com/DiverOfDark

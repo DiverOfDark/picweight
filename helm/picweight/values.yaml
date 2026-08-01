@@ -1,0 +1,193 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/diverofdark/picweight
+  # CI publishes sha-<7-char-sha> for every commit on master, semver tags on
+  # releases, and a rolling `latest`. When deployed by ArgoCD straight from
+  # this repo, pin with `image.tag=sha-$ARGOCD_APP_REVISION_SHORT` so the
+  # image always matches the commit being synced.
+  tag: "latest"
+  # sha-/semver tags are immutable, so IfNotPresent is safe. Switch to
+  # Always if you deploy the rolling `latest` tag.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Extra labels applied to the pod template. Useful for things like
+# gethomepage's pod-selector annotation:
+#   podLabels:
+#     app.kubernetes.io/pod: picweight
+podLabels: {}
+
+podAnnotations: {}
+
+# fsGroup 1000 matches the picweight user in the image so the PVC — which holds
+# the SQLite database and the thumbnail tree — is writable.
+podSecurityContext:
+  fsGroup: 1000
+  fsGroupChangePolicy: OnRootMismatch
+
+securityContext: {}
+  # allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: true
+  # capabilities:
+  #   drop: [ALL]
+
+service:
+  type: ClusterIP
+  # External port the Service exposes; targetPort is always the container's
+  # picweight.port. 80 matches the convention of putting an Ingress in front.
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: acme-issuer
+    # gethomepage.dev/enabled: "true"
+    # Uploads are 768px-bound but arrive at original resolution; give nginx room.
+    # nginx.ingress.kubernetes.io/proxy-body-size: "32m"
+    # SSE (/api/v1/meals/events) must not be buffered or cut off at 60s.
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    # nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  host: picweight.example.com
+  tls: []
+    # - hosts: [picweight.example.com]
+    #   secretName: picweight-tls
+
+# This is an I/O-bound API server. The agent loop is network latency, not CPU:
+# no ONNX, no ffmpeg, no inference (PRD §2).
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# SQLite (WAL) + the content-addressed 768px thumbnail tree.
+# Two years at 5 meals/day is roughly 350MB (§7), so 5Gi is generous.
+persistence:
+  # Name of a PVC managed out-of-band. When empty the chart creates
+  # <fullname>-data (annotated keep/Delete=false — your food log must survive
+  # a chart or ArgoCD app deletion).
+  existingClaim: ""
+  size: 5Gi
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+
+picweight:
+  port: 33100
+  dataPath: /app/data          # SQLite + thumbs/
+  rustLog: info
+  jwtTtl: "1209600"            # 14 days
+  # §5: the agent's web_search tool is config-gated and off by default.
+  webSearchEnabled: false
+
+openai:
+  # Name of an existing Secret carrying the API key. NEVER a values.yaml
+  # literal — see additionalObjects for how to create it.
+  # Empty defaults to "<fullname>-openai", which is what the commented
+  # SealedSecret example below produces.
+  existingSecret: ""
+  apiKeyKey: api_key
+  model: "gpt-4.1"
+  # Override for an OpenAI-compatible proxy (LiteLLM, vLLM, Azure).
+  baseUrl: ""
+
+oidc:
+  issuer: https://auth.example.com
+  scopes: "openid profile email"
+  # Defaults to https://<ingress.host>/api/auth/callback when empty.
+  redirectUri: ""
+  # Name of an existing Secret with client_id / client_secret / mobile_client_id.
+  # Empty defaults to "<fullname>-oidc". Create it however you like — see
+  # additionalObjects. The chart itself NEVER generates a Secret.
+  existingSecret: ""
+  # Keys inside that Secret. mobile_client_id is looked up with optional: true,
+  # so a web-only Secret still boots (the Android public client is simply
+  # unconfigured).
+  clientIdKey: client_id
+  clientSecretKey: client_secret
+  mobileClientIdKey: mobile_client_id
+
+# Health probes. /healthz is unauthenticated and does not touch the database.
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 30
+  timeoutSeconds: 10
+  successThreshold: 1
+  failureThreshold: 10
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  successThreshold: 1
+  failureThreshold: 15
+
+# Extra environment variables appended verbatim to the picweight container.
+extraEnv: []
+  # - name: PICWEIGHT_OPENAI_MODEL
+  #   value: gpt-4.1-mini
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# additionalObjects — the whole point of this chart (PRD §10, G8)
+#
+# The chart never generates a Secret and never assumes a secrets operator.
+# oidc.existingSecret / openai.existingSecret take the NAME of a Secret that
+# already exists; anything that can produce one — sealed-secrets, External
+# Secrets, SOPS, `kubectl create secret`, Vault Agent — is equally supported,
+# because the chart hardcodes none of them.
+#
+# Every entry below is rendered through `tpl`, so it may call chart helpers:
+# `{{ include "picweight.fullname" $ }}` resolves to the release-derived name,
+# and the default Secret names are "<fullname>-oidc" and "<fullname>-openai".
+# Note `$` (the root context), not `.` — inside `range`, `.` is the entry.
+#
+# Mind YAML quoting: a value that begins with `{{` must be quoted.
+# ---------------------------------------------------------------------------
+additionalObjects: []
+  # - apiVersion: external-secrets.io/v1
+  #   kind: ExternalSecret
+  #   metadata:
+  #     name: '{{ include "picweight.fullname" $ }}-oidc'
+  #   spec:
+  #     secretStoreRef: { name: openbao-store, kind: ClusterSecretStore }
+  #     refreshInterval: 1h
+  #     target:
+  #       name: '{{ include "picweight.fullname" $ }}-oidc'
+  #       creationPolicy: Owner
+  #       deletionPolicy: Retain
+  #     data:
+  #       - secretKey: client_id
+  #         remoteRef: { key: zitadel/picweight-credentials, property: client_id }
+  #       - secretKey: client_secret
+  #         remoteRef: { key: zitadel/picweight-credentials, property: client_secret }
+  #       # The Android app is a public (native) client — only its client_id exists.
+  #       - secretKey: mobile_client_id
+  #         remoteRef: { key: zitadel/picweight_android-credentials, property: client_id }
+  #
+  # - apiVersion: bitnami.com/v1alpha1
+  #   kind: SealedSecret
+  #   metadata:
+  #     name: '{{ include "picweight.fullname" $ }}-openai'
+  #   spec:
+  #     encryptedData:
+  #       api_key: AgBy3i4OJSWK...
+  #     template:
+  #       metadata:
+  #         name: '{{ include "picweight.fullname" $ }}-openai'

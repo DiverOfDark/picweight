@@ -1,0 +1,3235 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "picweight API",
+    "description": "AI-assisted calorie & БЖУ tracker. Photograph what you eat; a server-side estimation agent returns calories and macros.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "master"
+  },
+  "paths": {
+    "/api/auth/callback": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Handle the OIDC redirect",
+        "description": "Verifies the CSRF token against the state cookie, exchanges the authorization code with the PKCE verifier, validates the ID token (issuer, audience, nonce, signature), upserts the `users` row and sets the `picweight_session` cookie.",
+        "operationId": "callback",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "CSRF state token",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Provider error code",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "description": "Provider error detail",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the app with a session cookie set"
+          },
+          "400": {
+            "description": "Invalid callback parameters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Token exchange failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/config": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "OIDC configuration",
+        "description": "Issuer, client ids and scopes, so the Android app and the SPA only need to be told the picweight server URL.",
+        "operationId": "auth_config",
+        "responses": {
+          "200": {
+            "description": "OIDC configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Initiate OIDC login",
+        "description": "Starts the authorization-code + PKCE flow for the confidential web client. The PKCE verifier, nonce and CSRF token are stored in a short-lived signed cookie so the callback needs no server-side session store.",
+        "operationId": "login",
+        "responses": {
+          "302": {
+            "description": "Redirect to the OIDC provider"
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Log out",
+        "description": "Clears the `picweight_session` cookie and redirects to the login page. Bearer-token clients simply discard their token; nothing is stored server-side.",
+        "operationId": "logout",
+        "responses": {
+          "302": {
+            "description": "Redirect to the login page"
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Current session claims",
+        "description": "Returns the claims of the presented session JWT without touching the database or the IdP. Use `GET /api/v1/me` for the profile and today's targets.",
+        "operationId": "session_info",
+        "responses": {
+          "200": {
+            "description": "Session claims",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionClaims"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Refresh the session JWT",
+        "description": "Accepts a currently-valid session (bearer header or cookie) and issues a new JWT with a fresh expiry. An expired session cannot be resurrected — that path is a full re-login. Cookie callers also get the cookie re-set.",
+        "operationId": "refresh",
+        "responses": {
+          "200": {
+            "description": "A new session JWT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session missing, invalid or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/auth/token": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Exchange an OIDC ID token for a session JWT",
+        "description": "The Android app runs authorization-code + PKCE against the **native (public)** client itself, then posts the resulting ID token here. The token is verified against the provider's JWKS — accepted for either the web or the mobile client id — and a picweight session JWT is returned for use as `Authorization: Bearer`.",
+        "operationId": "token_exchange",
+        "requestBody": {
+          "description": "OIDC ID token to exchange",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenExchangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session JWT",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "ID token verification failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/barcode/{ean}": {
+      "post": {
+        "tags": [
+          "barcode"
+        ],
+        "summary": "Resolve a barcode to a food record",
+        "description": "Reads the local `foods` cache first, then Open Food Facts. `POST` rather than `GET` because a miss performs an outbound fetch and writes the cache.",
+        "operationId": "resolve_barcode",
+        "parameters": [
+          {
+            "name": "ean",
+            "in": "path",
+            "description": "EAN-8/EAN-13/UPC digits",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The food record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FoodResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid EAN",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Open Food Facts unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/days/{date}": {
+      "get": {
+        "tags": [
+          "days"
+        ],
+        "summary": "Get a day's totals and remaining budget",
+        "operationId": "get_day",
+        "parameters": [
+          {
+            "name": "date",
+            "in": "path",
+            "description": "Local calendar date, YYYY-MM-DD",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tz_offset",
+            "in": "query",
+            "description": "Minutes east of UTC to bucket by. Defaults to the offset of the user's\nmost recent meal, then to the profile timezone.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The day",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DayResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable date",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/dishes/recent": {
+      "get": {
+        "tags": [
+          "dishes"
+        ],
+        "summary": "Recent confirmed dishes",
+        "description": "Powers the capture screen's recent-dish chips — one tap sets the dish name, no keyboard. Confirmed meals only.",
+        "operationId": "recent_dishes",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "How many chips to return. Defaults to [`DEFAULT_RECENT_LIMIT`], capped at\n[`MAX_RECENT_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent dishes, most recent first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecentDish"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/export": {
+      "get": {
+        "tags": [
+          "export"
+        ],
+        "summary": "Export all data",
+        "operationId": "export_data",
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`json` (default) or `csv`.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/ExportFormat"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportDocument"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/groups/{group_id}": {
+      "get": {
+        "tags": [
+          "groups"
+        ],
+        "summary": "Get a sitting",
+        "description": "Member meals plus combined totals. Each meal was analysed by its own independent loop and stays independently correctable.",
+        "operationId": "get_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Client-generated sitting id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The sitting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such group for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Current user, profile and today's state",
+        "operationId": "get_me",
+        "responses": {
+          "200": {
+            "description": "The current user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/me/profile": {
+      "put": {
+        "tags": [
+          "profile"
+        ],
+        "summary": "Update body data and recompute targets",
+        "description": "Targets are computed with Mifflin-St Jeor — deterministic, offline and auditable. A deficit steeper than ~1% bodyweight/week is returned as a warning, not an error.",
+        "operationId": "update_profile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The saved profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals": {
+      "get": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "List meals",
+        "operationId": "list_meals",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive local start date.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Inclusive local end date.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum meals to return. Defaults to [`DEFAULT_HISTORY_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Rows to skip, for paging.",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meals, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MealResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Log a meal",
+        "description": "Multipart ingest. Idempotent on `client_uuid`: replaying the same key returns the existing meal with `deduplicated: true` rather than creating a duplicate. Returns 202 — analysis is always asynchronous.",
+        "operationId": "create_meal",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMealForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted; analysis enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing client_uuid or unreadable image",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals/events": {
+      "get": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Stream meal analysis events",
+        "description": "Server-sent events for this user only. Each `completed`, `reanalyzed` and `group_settled` event carries the full day state so a client can render the notification without a follow-up request.",
+        "operationId": "meal_events",
+        "responses": {
+          "200": {
+            "description": "text/event-stream; each frame is a JSON MealEvent under the `meal` event name",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals/{id}": {
+      "get": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Get a meal",
+        "operationId": "get_meal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Delete a meal",
+        "operationId": "delete_meal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Confirm or edit a meal",
+        "description": "Confirming a meal is what feeds `recall_similar_meals` — only confirmed meals, latest revision, are ever recalled. Every changed field is recorded in `item_corrections`.",
+        "operationId": "patch_meal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchMealRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The updated meal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals/{id}/reanalyze": {
+      "post": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Correct a meal by conversation",
+        "description": "Loads the persisted rig thread, appends the feedback as a new user turn and continues the same conversation, emitting a new revision. Prior revisions are retained. Returns 202 — the correction runs in the background.",
+        "operationId": "reanalyze_meal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReanalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted; correction enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MealAcceptedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty feedback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "An analysis is already running for this meal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals/{id}/revisions": {
+      "get": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Revision history",
+        "operationId": "meal_revisions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Revisions, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meal for this user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/meals/{id}/thumbnail": {
+      "get": {
+        "tags": [
+          "meals"
+        ],
+        "summary": "Get a meal's thumbnail",
+        "operationId": "get_meal_thumbnail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Meal id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JPEG image",
+            "content": {
+              "image/jpeg": {}
+            }
+          },
+          "404": {
+            "description": "No thumbnail for this meal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/weights": {
+      "get": {
+        "tags": [
+          "weights"
+        ],
+        "summary": "Weight history",
+        "operationId": "list_weights",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive start date.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Inclusive end date.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum readings to return. Defaults to [`DEFAULT_WEIGHT_LIMIT`].",
+            "required": false,
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Readings, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/WeightLogResponse"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "weights"
+        ],
+        "summary": "Log a weight",
+        "description": "Recomputes the user's targets from the new weight, since targets are derived from body data and must track it.",
+        "operationId": "log_weight",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LogWeightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The stored reading",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogWeightResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Implausible weight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Health check",
+        "description": "Deliberately does *not* touch the database: a probe that fails because\nSQLite is briefly locked would restart a pod that is merely busy.",
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "description": "The service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AuthConfigResponse": {
+        "type": "object",
+        "description": "OIDC settings a client needs so it only has to be told the server URL.",
+        "required": [
+          "issuer",
+          "client_id",
+          "scopes"
+        ],
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "description": "Confidential web client id."
+          },
+          "issuer": {
+            "type": "string",
+            "description": "Issuer URL for discovery."
+          },
+          "mobile_client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Public/native client id for the Android app, when configured."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Scopes to request."
+          }
+        }
+      },
+      "CreateMealForm": {
+        "type": "object",
+        "description": "The multipart form accepted by `POST /api/v1/meals`.\n\nDeclared for the OpenAPI spec; the handler reads the parts directly because\naxum's `Multipart` is a stream.",
+        "required": [
+          "client_uuid"
+        ],
+        "properties": {
+          "client_uuid": {
+            "type": "string",
+            "description": "Idempotency key generated on the phone at capture. Required."
+          },
+          "comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's free-text comment."
+          },
+          "dish_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Dish name from a chip, share intent, or comment."
+          },
+          "eaten_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "When the meal was eaten, RFC 3339."
+          },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Client-generated sitting id."
+          },
+          "group_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "How many photos the sitting will contain; settles the group instantly\nonce all N are terminal."
+          },
+          "meal_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional meal-type label."
+          },
+          "name_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/NameSource",
+                "description": "Which path supplied `dish_name`."
+              }
+            ]
+          },
+          "photo": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "binary",
+            "description": "The photo. Optional — a manual entry has none (§5 \"Manual entry\")."
+          },
+          "timezone_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Minutes east of UTC at capture."
+          }
+        }
+      },
+      "DayResponse": {
+        "type": "object",
+        "description": "Totals, targets, remaining and the verdict line for one local day.",
+        "required": [
+          "state",
+          "verdict",
+          "groups",
+          "meals"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GroupSummary"
+            },
+            "description": "Sittings, collapsed."
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MealResponse"
+            },
+            "description": "Meals not belonging to any sitting, newest first."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DayState",
+            "description": "The rules-engine state: consumed, targets, remaining, classification."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "One line of plain-language advice, templated or LLM-phrased."
+          }
+        }
+      },
+      "DayState": {
+        "type": "object",
+        "description": "A day's totals against its targets.\n\nCarried verbatim in the `/meals/events` completion payload so a client\nrenders the notification from one message with no follow-up round trip (§9).",
+        "required": [
+          "date",
+          "consumed_kcal",
+          "target_kcal",
+          "remaining_kcal",
+          "consumed_protein_g",
+          "target_protein_g",
+          "remaining_protein_g",
+          "consumed_fat_g",
+          "target_fat_g",
+          "consumed_carbs_g",
+          "target_carbs_g",
+          "meals_logged",
+          "status"
+        ],
+        "properties": {
+          "consumed_carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate consumed, grams."
+          },
+          "consumed_fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat consumed, grams."
+          },
+          "consumed_kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy consumed, kcal."
+          },
+          "consumed_protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein consumed, grams."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "The local calendar day these figures cover."
+          },
+          "meals_logged": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Meals logged on this day (all statuses except `failed`)."
+          },
+          "remaining_kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "`target_kcal - consumed_kcal`; may be negative."
+          },
+          "remaining_protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein still owed, grams; clamped at zero."
+          },
+          "status": {
+            "$ref": "#/components/schemas/DayStatus",
+            "description": "Classification derived from the figures above."
+          },
+          "target_carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate allowance, grams."
+          },
+          "target_fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat floor, grams."
+          },
+          "target_kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy target, kcal. Zero when targets are not computed."
+          },
+          "target_protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein floor, grams."
+          }
+        }
+      },
+      "DayStatus": {
+        "type": "string",
+        "description": "How a day is going. Computed from the numbers, never asked of a model.",
+        "enum": [
+          "on_track",
+          "tight",
+          "over",
+          "protein_unreachable",
+          "no_targets"
+        ]
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "The JSON body returned for every [`AppError`].",
+        "required": [
+          "error",
+          "message"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "Stable machine-readable code, e.g. `not_found`."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable detail. Generic for 5xx, specific for 4xx."
+          }
+        }
+      },
+      "EstimatedItem": {
+        "type": "object",
+        "description": "One component of a dish: the rice, the sauce, the chicken.",
+        "required": [
+          "name",
+          "grams",
+          "kcal",
+          "protein_g",
+          "fat_g",
+          "carbs_g",
+          "confidence",
+          "reasoning_note"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "EAN, when the item was resolved from a barcode."
+          },
+          "carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate for the stated grams."
+          },
+          "confidence": {
+            "type": "number",
+            "format": "double",
+            "description": "0.0–1.0 for this item alone."
+          },
+          "fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat for the stated grams."
+          },
+          "grams": {
+            "type": "number",
+            "format": "double",
+            "description": "Estimated edible mass in grams. This is where nearly all the error lives."
+          },
+          "grams_source": {
+            "$ref": "#/components/schemas/GramsSource",
+            "description": "Provenance of `grams`."
+          },
+          "kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy for the stated grams (not per 100g)."
+          },
+          "macro_source": {
+            "$ref": "#/components/schemas/MacroSource",
+            "description": "Provenance of the macros."
+          },
+          "name": {
+            "type": "string",
+            "description": "Component name."
+          },
+          "protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein for the stated grams."
+          },
+          "reasoning_note": {
+            "type": "string",
+            "description": "One line of \"why\", shown next to the item so the user can see the\nreasoning without opening the inspector (§5, step 5)."
+          }
+        }
+      },
+      "ExportDocument": {
+        "type": "object",
+        "description": "The JSON export document.",
+        "required": [
+          "export_version",
+          "app_version",
+          "exported_at",
+          "weights",
+          "meals"
+        ],
+        "properties": {
+          "app_version": {
+            "type": "string",
+            "description": "Backend version that produced it."
+          },
+          "export_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Schema version of this document, so an importer can adapt.",
+            "minimum": 0
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was produced, UTC."
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MealResponse"
+            },
+            "description": "Every meal at its current revision."
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileResponse",
+                "description": "Body data and targets, when onboarding is complete."
+              }
+            ]
+          },
+          "weights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeightLogResponse"
+            },
+            "description": "Every weight reading."
+          }
+        }
+      },
+      "ExportFormat": {
+        "type": "string",
+        "description": "Output format.",
+        "enum": [
+          "json",
+          "csv"
+        ]
+      },
+      "FoodFacts": {
+        "type": "object",
+        "description": "Normalized per-100g nutrition for one packaged product.",
+        "required": [
+          "source",
+          "source_ref",
+          "name"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The barcode this record was resolved from."
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Brand, when the provider knows one."
+          },
+          "carbs_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Carbohydrate per 100g."
+          },
+          "fat_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Fat per 100g."
+          },
+          "kcal_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Energy per 100g."
+          },
+          "name": {
+            "type": "string",
+            "description": "Product name."
+          },
+          "protein_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Protein per 100g."
+          },
+          "source": {
+            "type": "string",
+            "description": "Provider identifier, e.g. `openfoodfacts`."
+          },
+          "source_ref": {
+            "type": "string",
+            "description": "Provider-side identifier — the barcode, for Open Food Facts."
+          }
+        }
+      },
+      "FoodResponse": {
+        "type": "object",
+        "description": "A cached food record.",
+        "required": [
+          "id",
+          "source",
+          "name",
+          "fetched_at"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The barcode this record resolves."
+          },
+          "brand": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Brand, when known."
+          },
+          "carbs_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Carbohydrate per 100g."
+          },
+          "fat_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Fat per 100g."
+          },
+          "fetched_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the record was last fetched from the provider."
+          },
+          "id": {
+            "type": "string",
+            "description": "`foods.id`."
+          },
+          "kcal_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Energy per 100g."
+          },
+          "name": {
+            "type": "string",
+            "description": "Product name."
+          },
+          "protein_100g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Protein per 100g."
+          },
+          "source": {
+            "type": "string",
+            "description": "Provider, e.g. `openfoodfacts`."
+          }
+        }
+      },
+      "GoalType": {
+        "type": "string",
+        "description": "Direction of the calorie goal.",
+        "enum": [
+          "Lose",
+          "Maintain",
+          "Gain"
+        ]
+      },
+      "GramsSource": {
+        "type": "string",
+        "description": "Where an item's gram figure came from.",
+        "enum": [
+          "Agent",
+          "User",
+          "Barcode",
+          "Recall"
+        ]
+      },
+      "GroupResponse": {
+        "type": "object",
+        "description": "One sitting: its member meals and their combined totals.",
+        "required": [
+          "group_id",
+          "member_count",
+          "settled",
+          "last_photo_at",
+          "totals",
+          "meals"
+        ],
+        "properties": {
+          "expected_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "The client's `group_size` hint, when it sent one."
+          },
+          "group_id": {
+            "type": "string",
+            "description": "Client-generated sitting id."
+          },
+          "last_photo_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the most recent photo joined; the debounce runs from here."
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MealResponse"
+            },
+            "description": "The member meals, oldest first — the expanded per-dish rows."
+          },
+          "member_count": {
+            "type": "integer",
+            "description": "Meals that have actually landed.",
+            "minimum": 0
+          },
+          "notified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the single grouped notification fired, if it has."
+          },
+          "settled": {
+            "type": "boolean",
+            "description": "True once no member is still `pending` or `analyzing`."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MacroTotals",
+            "description": "Sum across every member meal."
+          }
+        }
+      },
+      "GroupSummary": {
+        "type": "object",
+        "description": "A group as it appears collapsed in the day view.",
+        "required": [
+          "group_id",
+          "member_count",
+          "totals",
+          "dish_names",
+          "eaten_at",
+          "has_failures"
+        ],
+        "properties": {
+          "dish_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Dish names, for the collapsed row's label."
+          },
+          "eaten_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Earliest `eaten_at` among the members."
+          },
+          "group_id": {
+            "type": "string",
+            "description": "Client-generated sitting id."
+          },
+          "has_failures": {
+            "type": "boolean",
+            "description": "True when a member failed — the row should say so rather than quietly\nunder-report."
+          },
+          "member_count": {
+            "type": "integer",
+            "description": "How many meals it contains.",
+            "minimum": 0
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MacroTotals",
+            "description": "Combined totals."
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "`GET /healthz` response.",
+        "required": [
+          "status",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `\"ok\"` when the process is serving."
+          },
+          "version": {
+            "type": "string",
+            "description": "Backend version string."
+          }
+        }
+      },
+      "LogWeightRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/weights`.",
+        "required": [
+          "weight_kg"
+        ],
+        "properties": {
+          "logged_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When it was measured. Defaults to now."
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/WeightSource",
+                "description": "How it was captured. Defaults to `manual`."
+              }
+            ]
+          },
+          "weight_kg": {
+            "type": "number",
+            "format": "double",
+            "description": "Weight in kilograms."
+          }
+        }
+      },
+      "LogWeightResponse": {
+        "type": "object",
+        "description": "Result of logging a weight.",
+        "required": [
+          "weight",
+          "targets_recomputed"
+        ],
+        "properties": {
+          "targets_recomputed": {
+            "type": "boolean",
+            "description": "True when this reading caused targets to be recomputed."
+          },
+          "weight": {
+            "$ref": "#/components/schemas/WeightLogResponse",
+            "description": "The stored reading."
+          }
+        }
+      },
+      "MacroSource": {
+        "type": "string",
+        "description": "Where an item's macros came from.",
+        "enum": [
+          "Recall",
+          "Model",
+          "Barcode",
+          "Web",
+          "User"
+        ]
+      },
+      "MacroTotals": {
+        "type": "object",
+        "description": "Summed macros, used for meals, days and groups alike.",
+        "required": [
+          "kcal",
+          "protein_g",
+          "fat_g",
+          "carbs_g"
+        ],
+        "properties": {
+          "carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate, grams."
+          },
+          "fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat, grams."
+          },
+          "kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy, kcal."
+          },
+          "protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein, grams."
+          }
+        }
+      },
+      "MeResponse": {
+        "type": "object",
+        "description": "`GET /api/v1/me` response.",
+        "required": [
+          "user",
+          "today",
+          "version"
+        ],
+        "properties": {
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProfileResponse",
+                "description": "Body data and targets. `None` until onboarding completes."
+              }
+            ]
+          },
+          "today": {
+            "$ref": "#/components/schemas/DayState",
+            "description": "Today's state, so the home screen renders from one request."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "Identity."
+          },
+          "version": {
+            "type": "string",
+            "description": "Backend version string, for the about screen and drift diagnosis."
+          }
+        }
+      },
+      "MealAcceptedResponse": {
+        "type": "object",
+        "description": "202 body returned by ingest and by re-analysis.",
+        "required": [
+          "meal_id",
+          "status",
+          "revision",
+          "deduplicated"
+        ],
+        "properties": {
+          "deduplicated": {
+            "type": "boolean",
+            "description": "True when an existing meal was returned because `client_uuid` had\nalready been seen — the idempotent-replay path."
+          },
+          "meal_id": {
+            "type": "string",
+            "description": "The meal that was created or resumed."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Revision the enqueued job will write."
+          },
+          "status": {
+            "$ref": "#/components/schemas/MealStatus",
+            "description": "Always `pending` for a new upload; the revision being produced for a\nre-analysis."
+          }
+        }
+      },
+      "MealEstimate": {
+        "type": "object",
+        "description": "What the agent returns for one photo.",
+        "required": [
+          "dish_name",
+          "items",
+          "overall_confidence"
+        ],
+        "properties": {
+          "container": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The container identified in the frame — a standard delivery bowl, a 30cm\npizza box, a 0.5L cup. With no comment and no coin on the plate this is\nthe only reliable scale reference, so the prompt pushes hard on it (§5)."
+          },
+          "cuisine": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cuisine, when it is a useful prior (e.g. \"Thai\", \"Georgian\")."
+          },
+          "dish_name": {
+            "type": "string",
+            "description": "The dish as identified (or as supplied by the user, which outranks the\nvisual read)."
+          },
+          "from_recall": {
+            "type": "boolean",
+            "description": "Whether the estimate came from the user's own confirmed history.\nSurfaced at confirm time so \"this came from your history\" is visible\nrather than implicit (PRD §14.1)."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EstimatedItem"
+            },
+            "description": "One row per component."
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-form note about the estimate as a whole."
+          },
+          "overall_confidence": {
+            "type": "number",
+            "format": "double",
+            "description": "0.0–1.0 across the whole estimate."
+          }
+        }
+      },
+      "MealEvent": {
+        "type": "object",
+        "description": "One event on the stream.\n\n`Clone` because broadcast hands every subscriber its own copy.",
+        "required": [
+          "kind",
+          "revision",
+          "emitted_at"
+        ],
+        "properties": {
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Line 2 + 3 + 4 of the notification, already phrased."
+          },
+          "day": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DayState",
+                "description": "The day state, so no follow-up request is needed."
+              }
+            ]
+          },
+          "dish_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Dish name — the notification leads with it (§6)."
+          },
+          "emitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the event was produced, UTC."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Failure reason, set only on `Failed`."
+          },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sitting, when the meal belongs to one."
+          },
+          "headline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ready-to-render notification lines."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MealEventKind",
+            "description": "What happened."
+          },
+          "meal_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The meal, for everything except `GroupSettled`."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Revision these figures describe."
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MealStatus",
+                "description": "Meal status after the event."
+              }
+            ]
+          },
+          "totals": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MacroTotals",
+                "description": "Totals for the meal, or for the whole sitting on `GroupSettled`."
+              }
+            ]
+          }
+        }
+      },
+      "MealEventKind": {
+        "type": "string",
+        "description": "What happened.",
+        "enum": [
+          "queued",
+          "analyzing",
+          "completed",
+          "reanalyzed",
+          "failed",
+          "group_settled",
+          "updated"
+        ]
+      },
+      "MealFeedback": {
+        "type": "object",
+        "description": "A self-contained notification payload.\n\nSelf-contained is the requirement, not a nicety: the notification fires\n~20–30s after capture, by which time the phone may be pocketed, so it has to\nmake sense read cold minutes later. Lead with the dish name (§6 timing).",
+        "required": [
+          "headline",
+          "standing",
+          "macro_status",
+          "verdict",
+          "day"
+        ],
+        "properties": {
+          "day": {
+            "$ref": "#/components/schemas/DayState",
+            "description": "The full day state, so a client renders from one message with no\nfollow-up round trip."
+          },
+          "headline": {
+            "type": "string",
+            "description": "Line 1 — what was logged: \"Шаурма с курицей — 780 kcal\"."
+          },
+          "macro_status": {
+            "type": "string",
+            "description": "Line 3 — macro status against the floor that actually binds."
+          },
+          "standing": {
+            "type": "string",
+            "description": "Line 2 — where you stand: \"1,450 / 2,050 today · 600 left\"."
+          },
+          "verdict": {
+            "type": "string",
+            "description": "Line 4 — the one-line verdict, LLM-phrased from the numbers with a\ntemplated fallback."
+          }
+        }
+      },
+      "MealItemResponse": {
+        "type": "object",
+        "description": "One component of a meal.",
+        "required": [
+          "id",
+          "position",
+          "name",
+          "grams",
+          "grams_source",
+          "kcal",
+          "protein_g",
+          "fat_g",
+          "carbs_g",
+          "macro_source"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "EAN, when resolved from a barcode."
+          },
+          "carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate, grams."
+          },
+          "confidence": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "0.0–1.0."
+          },
+          "fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat, grams."
+          },
+          "grams": {
+            "type": "number",
+            "format": "double",
+            "description": "Edible mass in grams."
+          },
+          "grams_source": {
+            "$ref": "#/components/schemas/GramsSource",
+            "description": "Provenance of `grams`."
+          },
+          "id": {
+            "type": "string",
+            "description": "`meal_items.id`."
+          },
+          "kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy."
+          },
+          "macro_source": {
+            "$ref": "#/components/schemas/MacroSource",
+            "description": "Provenance of the macros."
+          },
+          "name": {
+            "type": "string",
+            "description": "Component name."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Display order."
+          },
+          "protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein, grams."
+          },
+          "reasoning_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "One line of \"why\", shown next to the item."
+          }
+        }
+      },
+      "MealResponse": {
+        "type": "object",
+        "description": "A meal with its items at the current revision.",
+        "required": [
+          "id",
+          "client_uuid",
+          "name_source",
+          "revision",
+          "status",
+          "eaten_at",
+          "timezone_offset",
+          "portion_scale",
+          "items",
+          "totals",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "client_uuid": {
+            "type": "string",
+            "description": "Client-generated idempotency key."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Row creation time."
+          },
+          "dish_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Dish name as displayed."
+          },
+          "eaten_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was eaten (UTC)."
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Failure reason when `status` is `failed` — visible, never silent (§5)."
+          },
+          "group_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The sitting this meal belongs to, if any."
+          },
+          "group_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Client hint for how many photos the sitting will contain."
+          },
+          "id": {
+            "type": "string",
+            "description": "`meals.id`."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MealItemResponse"
+            },
+            "description": "Items at `revision`, in display order."
+          },
+          "meal_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional meal-type label (\"breakfast\", \"snack\", …)."
+          },
+          "name_source": {
+            "$ref": "#/components/schemas/NameSource",
+            "description": "Which input path supplied the name — instrumented per §14.2."
+          },
+          "portion_scale": {
+            "type": "number",
+            "format": "double",
+            "description": "\"Ate 60% of it\" multiplier; already applied to `items` and `totals`."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Current revision."
+          },
+          "status": {
+            "$ref": "#/components/schemas/MealStatus",
+            "description": "Lifecycle status."
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Relative URL of the 768px thumbnail, or `None` for a manual entry."
+          },
+          "timezone_offset": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes east of UTC at capture; buckets the local day."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MacroTotals",
+            "description": "Sum of `items`."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last modification time."
+          },
+          "user_comment": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The user's comment, when they typed one."
+          }
+        }
+      },
+      "MealStatus": {
+        "type": "string",
+        "description": "Lifecycle of a meal. `pending`/`analyzing` are in-flight, `needs_review`\nmeans the agent produced a draft the user has not confirmed, `confirmed`\nis the only status `recall_similar_meals` reads from, `failed` is loud.",
+        "enum": [
+          "Pending",
+          "Analyzing",
+          "NeedsReview",
+          "Confirmed",
+          "Failed"
+        ]
+      },
+      "NameSource": {
+        "type": "string",
+        "description": "Which input path supplied the dish name. Instrumented in M4 to answer\nPRD §14.2 — whether the zero-keyboard paths actually get used.",
+        "enum": [
+          "Vision",
+          "RecentChip",
+          "ShareIntent",
+          "Comment",
+          "Manual"
+        ]
+      },
+      "PatchMealItem": {
+        "type": "object",
+        "description": "One item in a `PATCH` body.",
+        "required": [
+          "name",
+          "grams",
+          "kcal",
+          "protein_g",
+          "fat_g",
+          "carbs_g"
+        ],
+        "properties": {
+          "barcode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "EAN, when the user scanned one."
+          },
+          "carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Carbohydrate, grams."
+          },
+          "fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Fat, grams."
+          },
+          "grams": {
+            "type": "number",
+            "format": "double",
+            "description": "Edible mass in grams."
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Existing `meal_items.id`, or omitted to add a new item."
+          },
+          "kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Energy."
+          },
+          "name": {
+            "type": "string",
+            "description": "Component name."
+          },
+          "protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Protein, grams."
+          }
+        }
+      },
+      "PatchMealRequest": {
+        "type": "object",
+        "description": "Body of `PATCH /api/v1/meals/:id` — confirm, or edit items.",
+        "properties": {
+          "dish_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Corrected dish name; also rewrites `dish_name_normalized`."
+          },
+          "items": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PatchMealItem"
+            },
+            "description": "Full replacement item list. Omit to leave items untouched.\n\nEvery changed field is written to `item_corrections` so the correction\nhistory — and the per-user `calibration_factor` derived from it — stays\ncomplete."
+          },
+          "meal_type": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Meal-type label."
+          },
+          "portion_scale": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "\"Ate 60% of it\"."
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MealStatus",
+                "description": "New status. Only `confirmed` is meaningful from a client."
+              }
+            ]
+          }
+        }
+      },
+      "ProfileResponse": {
+        "type": "object",
+        "description": "Body data and the targets derived from it.",
+        "required": [
+          "sex",
+          "birth_date",
+          "height_cm",
+          "activity_factor",
+          "goal_type",
+          "calibration_factor",
+          "timezone"
+        ],
+        "properties": {
+          "activity_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Activity multiplier, 1.2 sedentary … 1.9 very active."
+          },
+          "birth_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date of birth."
+          },
+          "calibration_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Per-user multiplier learned from correction history (§5 hidden fat)."
+          },
+          "current_weight_kg": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Most recent logged weight, for convenience."
+          },
+          "goal_type": {
+            "$ref": "#/components/schemas/GoalType",
+            "description": "Direction of the goal."
+          },
+          "height_cm": {
+            "type": "number",
+            "format": "double",
+            "description": "Height in centimetres."
+          },
+          "rate_kg_per_week": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Intended rate of change, kg/week."
+          },
+          "sex": {
+            "$ref": "#/components/schemas/Sex",
+            "description": "Biological sex — changes the BMR constant by 166 kcal."
+          },
+          "target_carbs_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Daily carbohydrate allowance."
+          },
+          "target_fat_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Daily fat floor."
+          },
+          "target_kcal": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Daily energy target."
+          },
+          "target_protein_g": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Daily protein floor."
+          },
+          "target_weight_kg": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Target weight in kilograms."
+          },
+          "targets_computed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the targets were last recomputed."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone name, the default for meals that arrive without an offset."
+          }
+        }
+      },
+      "ReanalyzeRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/meals/:id/reanalyze`.",
+        "required": [
+          "feedback"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "string",
+            "description": "What is wrong, in the user's words: \"too much rice, it was about half\nthat\". Stored verbatim on `analysis_jobs.user_feedback` — it is far\nricher signal than a gram delta."
+          }
+        }
+      },
+      "RecentDish": {
+        "type": "object",
+        "description": "One previously confirmed dish, ready to become a chip.",
+        "required": [
+          "dish_name",
+          "dish_name_normalized",
+          "last_eaten_at",
+          "occurrences",
+          "totals",
+          "last_meal_id"
+        ],
+        "properties": {
+          "dish_name": {
+            "type": "string",
+            "description": "The dish name as the user confirmed it."
+          },
+          "dish_name_normalized": {
+            "type": "string",
+            "description": "Normalized form — what recall matches on."
+          },
+          "last_eaten_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Most recent time this dish was eaten."
+          },
+          "last_meal_id": {
+            "type": "string",
+            "description": "The meal those totals came from, for a \"same as last time\" shortcut."
+          },
+          "occurrences": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many times it has been confirmed. High counts are the flywheel\nworking."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MacroTotals",
+            "description": "Totals from the most recent confirmed occurrence, so the chip can show\n\"≈780 kcal\"."
+          }
+        }
+      },
+      "RevisionEntry": {
+        "type": "object",
+        "description": "One entry of a meal's revision history.",
+        "required": [
+          "revision",
+          "model",
+          "reseeded",
+          "items",
+          "totals",
+          "tool_calls",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the producing job finished."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MealItemResponse"
+            },
+            "description": "Items at this revision."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model that produced it."
+          },
+          "reseeded": {
+            "type": "boolean",
+            "description": "Whether the session was continued or reseeded."
+          },
+          "revision": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Revision number, 1-based."
+          },
+          "tool_calls": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tool calls made producing it. Zero on a continuation is the point (§13)."
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MacroTotals",
+            "description": "Totals at this revision."
+          },
+          "user_feedback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The verbatim feedback that caused this revision, if any."
+          }
+        }
+      },
+      "RevisionsResponse": {
+        "type": "object",
+        "description": "Revision history for one meal.",
+        "required": [
+          "meal_id",
+          "revisions"
+        ],
+        "properties": {
+          "meal_id": {
+            "type": "string",
+            "description": "The meal."
+          },
+          "revisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RevisionEntry"
+            },
+            "description": "Newest revision first."
+          }
+        }
+      },
+      "SessionClaims": {
+        "type": "object",
+        "description": "Claims carried by a picweight session JWT.",
+        "required": [
+          "sub",
+          "name",
+          "email",
+          "exp",
+          "iat"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Email from the ID token, or empty."
+          },
+          "exp": {
+            "type": "integer",
+            "description": "Expiry, seconds since the epoch.",
+            "minimum": 0
+          },
+          "iat": {
+            "type": "integer",
+            "description": "Issued-at, seconds since the epoch.",
+            "minimum": 0
+          },
+          "iss": {
+            "type": "string",
+            "description": "Issuer URL the subject came from."
+          },
+          "name": {
+            "type": "string",
+            "description": "Display name from the ID token, or empty."
+          },
+          "sub": {
+            "type": "string",
+            "description": "OIDC subject — stable per user per issuer."
+          }
+        }
+      },
+      "Sex": {
+        "type": "string",
+        "description": "Biological sex, as required by the Mifflin-St Jeor BMR formula (§6).",
+        "enum": [
+          "Male",
+          "Female"
+        ]
+      },
+      "TargetInputs": {
+        "type": "object",
+        "description": "Everything the formulas need.",
+        "required": [
+          "sex",
+          "age_years",
+          "height_cm",
+          "weight_kg",
+          "activity_factor",
+          "goal_type",
+          "target_weight_kg",
+          "rate_kg_per_week"
+        ],
+        "properties": {
+          "activity_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Activity multiplier, 1.2–1.9."
+          },
+          "age_years": {
+            "type": "number",
+            "format": "double",
+            "description": "Age in years at the time of computation."
+          },
+          "goal_type": {
+            "$ref": "#/components/schemas/GoalType",
+            "description": "Direction of the goal."
+          },
+          "height_cm": {
+            "type": "number",
+            "format": "double",
+            "description": "Height in centimetres."
+          },
+          "rate_kg_per_week": {
+            "type": "number",
+            "format": "double",
+            "description": "Intended rate of change in kg per week (always positive; direction comes\nfrom `goal_type`)."
+          },
+          "sex": {
+            "$ref": "#/components/schemas/Sex",
+            "description": "Biological sex — the BMR constant differs by 166 kcal."
+          },
+          "target_weight_kg": {
+            "type": "number",
+            "format": "double",
+            "description": "Target weight in kilograms; drives the protein and fat floors."
+          },
+          "weight_kg": {
+            "type": "number",
+            "format": "double",
+            "description": "Current weight in kilograms."
+          }
+        }
+      },
+      "Targets": {
+        "type": "object",
+        "description": "The computed daily targets.",
+        "required": [
+          "bmr",
+          "tdee",
+          "kcal",
+          "protein_g",
+          "fat_g",
+          "carbs_g"
+        ],
+        "properties": {
+          "bmr": {
+            "type": "number",
+            "format": "double",
+            "description": "Basal metabolic rate, kcal/day."
+          },
+          "carbs_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Daily carbohydrate allowance — the remainder."
+          },
+          "fat_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Daily fat floor, grams."
+          },
+          "kcal": {
+            "type": "number",
+            "format": "double",
+            "description": "Daily energy target, kcal."
+          },
+          "protein_g": {
+            "type": "number",
+            "format": "double",
+            "description": "Daily protein floor, grams."
+          },
+          "tdee": {
+            "type": "number",
+            "format": "double",
+            "description": "Total daily energy expenditure, kcal/day."
+          }
+        }
+      },
+      "TokenExchangeRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/auth/token`.",
+        "required": [
+          "id_token"
+        ],
+        "properties": {
+          "id_token": {
+            "type": "string",
+            "description": "ID token obtained by the native client from the IdP."
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "description": "A minted picweight session JWT.",
+        "required": [
+          "token",
+          "expires_in"
+        ],
+        "properties": {
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Lifetime in seconds.",
+            "minimum": 0
+          },
+          "token": {
+            "type": "string",
+            "description": "The session JWT, for `Authorization: Bearer`."
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "description": "Body of `PUT /api/v1/me/profile`.\n\nThis is the onboarding payload and the edit payload both; every field is\nrequired because the formulas need all of them.",
+        "required": [
+          "sex",
+          "birth_date",
+          "height_cm",
+          "activity_factor",
+          "goal_type",
+          "target_weight_kg",
+          "rate_kg_per_week",
+          "timezone"
+        ],
+        "properties": {
+          "activity_factor": {
+            "type": "number",
+            "format": "double",
+            "description": "Activity multiplier, 1.2–1.9."
+          },
+          "birth_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Date of birth."
+          },
+          "current_weight_kg": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Current weight. When present, also written to `weight_logs` with source\n`onboarding`, since targets recompute on weight change (G6)."
+          },
+          "goal_type": {
+            "$ref": "#/components/schemas/GoalType",
+            "description": "Direction of the goal."
+          },
+          "height_cm": {
+            "type": "number",
+            "format": "double",
+            "description": "Height in centimetres."
+          },
+          "rate_kg_per_week": {
+            "type": "number",
+            "format": "double",
+            "description": "Intended rate of change, kg/week (always positive)."
+          },
+          "sex": {
+            "$ref": "#/components/schemas/Sex",
+            "description": "Biological sex."
+          },
+          "target_weight_kg": {
+            "type": "number",
+            "format": "double",
+            "description": "Target weight in kilograms."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone name."
+          }
+        }
+      },
+      "UpdateProfileResponse": {
+        "type": "object",
+        "description": "`PUT /api/v1/me/profile` response.",
+        "required": [
+          "profile",
+          "warnings"
+        ],
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/ProfileResponse",
+            "description": "The saved profile with freshly computed targets."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Non-fatal advice — e.g. an aggressive deficit. Warned about, not\nsilently accepted (§6)."
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "description": "The authenticated user's identity.",
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the account was first seen."
+          },
+          "display_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display name from the ID token."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Email from the ID token, when the IdP supplied one."
+          },
+          "id": {
+            "type": "string",
+            "description": "`users.id`."
+          }
+        }
+      },
+      "WeightLogResponse": {
+        "type": "object",
+        "description": "One weight reading.",
+        "required": [
+          "id",
+          "logged_at",
+          "weight_kg",
+          "source"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`weight_logs.id`."
+          },
+          "logged_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When it was measured."
+          },
+          "source": {
+            "$ref": "#/components/schemas/WeightSource",
+            "description": "How it was captured."
+          },
+          "weight_kg": {
+            "type": "number",
+            "format": "double",
+            "description": "Weight in kilograms."
+          }
+        }
+      },
+      "WeightSource": {
+        "type": "string",
+        "description": "How a weight reading was captured.",
+        "enum": [
+          "Manual",
+          "Onboarding",
+          "Import",
+          "Scale"
+        ]
+      }
+    },
+    "securitySchemes": {
+      "session": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Session JWT. Web clients receive it as the HttpOnly `picweight_session` cookie after OIDC login; native clients obtain it from `POST /api/auth/token` and send it as `Authorization: Bearer`."
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "OIDC login and session management"
+    },
+    {
+      "name": "profile",
+      "description": "Body data and computed targets"
+    },
+    {
+      "name": "meals",
+      "description": "Ingest, correction and history"
+    },
+    {
+      "name": "groups",
+      "description": "Multi-dish sittings"
+    },
+    {
+      "name": "days",
+      "description": "Local-day totals and remaining budget"
+    },
+    {
+      "name": "dishes",
+      "description": "Zero-keyboard input paths"
+    },
+    {
+      "name": "barcode",
+      "description": "Packaged-goods lookup"
+    },
+    {
+      "name": "weights",
+      "description": "Weight logging"
+    },
+    {
+      "name": "export",
+      "description": "Data export"
+    },
+    {
+      "name": "system",
+      "description": "Health and version"
+    }
+  ]
+}

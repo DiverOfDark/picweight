@@ -1,0 +1,200 @@
+@import "tailwindcss";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * picweight reads like an instrument, not a wellness app.
+ *
+ * Two rules carry the identity:
+ *   1. Every measurement is set in the mono face with tabular figures — the
+ *      kitchen-scale readout voice. Every sentence is set in the sans face.
+ *      Numbers and prose never wear each other's clothes.
+ *   2. The accent is the day's verdict. `--day-accent` is rewritten from the
+ *      DayStatus the API returns, so the ring, the standing bar and the day
+ *      chip all shift green → amber → red with how the day is actually going.
+ *      Nothing else in the interface is coloured for decoration.
+ */
+
+@theme {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Surfaces — warm near-black, so the food thumbnails stay the only warm thing
+     that is actually saturated. */
+  --color-background: #0c0c0b;
+  --color-card: #161615;
+  --color-card-foreground: #f6f5f0;
+  --color-popover: #131312;
+  --color-popover-foreground: #f6f5f0;
+  --color-raised: #1e1e1c;
+
+  /* Ink */
+  --color-foreground: #f6f5f0;
+  --color-ink: #f6f5f0;
+  --color-ink-2: #c3c2b7;
+  --color-ink-3: #898781;
+
+  --color-primary: #f6f5f0;
+  --color-primary-foreground: #121211;
+  --color-secondary: #23231f;
+  --color-secondary-foreground: #f6f5f0;
+  --color-muted: #1c1c1a;
+  --color-muted-foreground: #8f8d85;
+  --color-accent: #23231f;
+  --color-accent-foreground: #f6f5f0;
+  --color-destructive: #d03b3b;
+  --color-destructive-foreground: #f6f5f0;
+
+  --color-border: rgba(246, 245, 240, 0.10);
+  --color-input: rgba(246, 245, 240, 0.14);
+  --color-ring: rgba(246, 245, 240, 0.5);
+  --color-rule: rgba(246, 245, 240, 0.18);
+  --color-grid: #2c2c2a;
+
+  /* Macro series — validated for the dark surface, all-pairs, deutan/protan/
+     tritan (dataviz slots 1/2/3). Never recoloured, never cycled. */
+  --color-protein: #3987e5;
+  --color-fat: #d95926;
+  --color-carbs: #199e70;
+
+  /* Status — reserved. Never reused as a series colour. */
+  --color-good: #0ca30c;
+  --color-warning: #fab219;
+  --color-serious: #ec835a;
+  --color-critical: #d03b3b;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo,
+    Consolas, "Liberation Mono", monospace;
+}
+
+/* `inline` so the utility resolves the runtime variable rather than a copy of
+   its value at build time — this is what lets the accent track the day. */
+@theme inline {
+  --color-day: var(--day-accent);
+}
+
+:root {
+  --radius: 0.625rem;
+  --day-accent: #898781;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  ::selection {
+    background: rgba(246, 245, 240, 0.18);
+  }
+}
+
+@utility num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+@utility eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+/*
+ * The signature structural device: a bezel of hairline ticks, the way a kitchen
+ * scale or a measuring jug is marked. Used as the rule under section headings
+ * and down the left of the meal ledger — it encodes "this is a measured thing",
+ * which is the one claim the whole product rests on.
+ */
+@utility tick-rule {
+  height: 7px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-rule) 0 1px,
+    transparent 1px 8px
+  );
+  background-position: bottom;
+  background-repeat: repeat-x;
+  mask-image: linear-gradient(to right, #000 0%, #000 72%, transparent 100%);
+}
+
+/* The same bezel for centred layouts, fading at both ends instead of one. */
+@utility tick-rule-center {
+  height: 7px;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--color-rule) 0 1px,
+    transparent 1px 8px
+  );
+  background-position: bottom;
+  background-repeat: repeat-x;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0%,
+    #000 22%,
+    #000 78%,
+    transparent 100%
+  );
+}
+
+@utility tick-rule-v {
+  width: 7px;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    var(--color-rule) 0 1px,
+    transparent 1px 8px
+  );
+  background-repeat: repeat-y;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(246, 245, 240, 0.08);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(246, 245, 240, 0.16);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

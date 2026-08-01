@@ -1,0 +1,42 @@
+# Keep the build context small. Without this the context is ~15 GB (backend/target
+# alone is 14 G) and `docker build` is unusable.
+#
+# Every stage in the Dockerfile rebuilds its own artefacts from source, so none
+# of the paths below are ever wanted inside an image.
+
+# --- Rust -------------------------------------------------------------------
+backend/target
+
+# --- Node / Vue -------------------------------------------------------------
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# --- Android / Gradle -------------------------------------------------------
+android/build
+android/app/build
+android/.gradle
+android/.kotlin
+android/.cxx
+android/local.properties
+
+# --- VCS & IDE --------------------------------------------------------------
+.git
+.github
+.idea
+.vscode
+
+# --- Runtime data (never ship a developer's food log into an image) ---------
+data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+thumbs
+uploads
+
+# --- Secrets ----------------------------------------------------------------
+.env
+.env.*
+android/keystore.properties
