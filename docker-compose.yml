@@ -12,6 +12,14 @@ services:
       context: .
       args:
         PICWEIGHT_VERSION: "${PICWEIGHT_VERSION:-dev}"
+        # The Android versionCode the bundled APK is built with, and the number the
+        # in-app updater compares against. Without it this falls back to the global
+        # ARG default of 1, so every compose rebuild would ship an APK at code 1
+        # advertising code 1 — no false prompts, but a compose self-hoster would
+        # never be offered an update either, silently. .dockerignore excludes .git,
+        # so the count has to be handed in from out here:
+        #   PICWEIGHT_VERSION_CODE=$(git rev-list --count HEAD) docker compose build
+        PICWEIGHT_VERSION_CODE: "${PICWEIGHT_VERSION_CODE:-1}"
     ports:
       - "33100:33100"
     volumes:

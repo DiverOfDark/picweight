@@ -49,6 +49,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          # The Android versionCode is `git rev-list --count HEAD`, and
+          # actions/checkout defaults to a depth-1 clone, where that count is 1 on
+          # every single build. The in-app updater would then compare 1 against 1
+          # and answer "up to date" forever — the exact failure this versioning
+          # scheme exists to prevent. Full history is not optional here.
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -66,29 +73,46 @@ jobs:
           restore-keys: |
             gradle-${{ runner.os }}-
 
+      # Must agree with the `docker` job below: an APK from here and an APK from
+      # the image have to describe themselves identically, or "is the server
+      # newer?" becomes a coin toss. The docker job keeps the leading `v` in
+      # PICWEIGHT_VERSION and the Dockerfile strips it, so both end at `1.2.3`.
       - name: Compute version
         id: version
         run: |
+          set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+            name="${GITHUB_REF#refs/tags/v}"
           else
-            echo "version=" >> "$GITHUB_OUTPUT"
+            # Not a release, so do not claim to be one. `master+<short-sha>` is
+            # honest and unique per build; the old empty value meant Gradle fell
+            # back to its "1.0.0" default.
+            name="${GITHUB_REF_NAME}+$(git rev-parse --short HEAD)"
           fi
+          echo "version=$name" >> "$GITHUB_OUTPUT"
+          # Monotonic on master, unlike anything derived from tags.
+          echo "version_code=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
       # The Retrofit client is generated from the committed android/openapi.json,
       # so this also compiles the API contract (PRD §13 contract-drift guard).
       # The image build regenerates that spec from the binary it ships.
+      #
+      # Both properties are passed unconditionally. Passing only -PversionName —
+      # as this job used to — left versionCode at Gradle's fallback of 1, so an
+      # APK published from a tag could never supersede an installed one.
       - name: Build Android APKs
         run: |
+          set -euo pipefail
           cd android
           chmod +x gradlew
-          VERSION_ARGS=""
-          if [ -n "${{ steps.version.outputs.version }}" ]; then
-            VERSION_ARGS="-PversionName=${{ steps.version.outputs.version }}"
-          fi
-          ./gradlew assembleDebug assembleRelease --no-daemon $VERSION_ARGS
+          ./gradlew assembleDebug assembleRelease --no-daemon \
+            "-PversionName=$VERSION_NAME" "-PversionCode=$VERSION_CODE"
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          # Through the environment rather than inline `${{ }}`: the version name
+          # embeds a git ref, which is attacker-controlled on a PR.
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.version_code }}
 
       - name: Rename release APK for upload
         if: startsWith(github.ref, 'refs/tags/v')
@@ -191,15 +215,26 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v6
+        with:
+          # See build-android: a shallow clone makes `git rev-list --count HEAD`
+          # return 1 forever, and the image would ship an APK that no installed
+          # client ever considers newer.
+          fetch-depth: 0
 
       - name: Compute version
         id: version
         run: |
+          set -euo pipefail
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # The `v` is kept; the Dockerfile strips it for the Android
+            # versionName and the backend reports the tag verbatim.
             echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=${GITHUB_REF#refs/heads/}" >> "$GITHUB_OUTPUT"
+            echo "version=${GITHUB_REF_NAME}+$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
           fi
+          # The Android versionCode. Same expression as build-android, so the two
+          # jobs cannot disagree about which build is newer.
+          echo "version_code=$(git rev-list --count HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -224,6 +259,12 @@ jobs:
 
       # Pull requests build the image (so `cargo test --release` still gates the
       # PR) but must not push: GITHUB_TOKEN has no package write from a fork.
+      #
+      # PICWEIGHT_VERSION_CODE changes on every commit, so the android-builder
+      # stage no longer reuses its cached layer across master pushes that leave
+      # android/ untouched. That is inherent — the APK's identity has to change
+      # when the image's does — and the stage's Gradle cache mount absorbs most of
+      # the cost.
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -231,7 +272,9 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: PICWEIGHT_VERSION=${{ steps.version.outputs.version }}
+          build-args: |
+            PICWEIGHT_VERSION=${{ steps.version.outputs.version }}
+            PICWEIGHT_VERSION_CODE=${{ steps.version.outputs.version_code }}
           secrets: |
             keystore_password=${{ secrets.KEYSTORE_PASSWORD }}
           cache-from: type=gha

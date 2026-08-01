@@ -47,6 +47,7 @@ import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.MacroBar
 import dev.picweight.android.ui.common.MacroColors
 import dev.picweight.android.ui.common.asWhole
+import dev.picweight.android.ui.update.UpdateBanner
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -97,6 +98,9 @@ fun HomeScreen(
             if (state.authExpired) {
                 item { AuthExpiredBanner(onReLogin = onReLogin) }
             }
+            // Draws nothing unless the app-start check found a strictly newer build on
+            // the server — including when the check failed, which must stay invisible.
+            item { UpdateBanner(onOpenSettings = onProfile) }
             if (!state.hasProfile) {
                 item {
                     Box(Modifier.padding(16.dp)) {

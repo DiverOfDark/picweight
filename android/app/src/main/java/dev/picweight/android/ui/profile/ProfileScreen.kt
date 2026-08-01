@@ -40,6 +40,7 @@ import dev.picweight.android.data.remote.model.GoalType
 import dev.picweight.android.data.remote.model.Sex
 import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.asWhole
+import dev.picweight.android.ui.update.UpdateSection
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -217,6 +218,14 @@ fun ProfileScreen(
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = viewModel::logWeight, enabled = !state.busy) { Text("Log") }
             }
+
+            Spacer(Modifier.height(24.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            // Self-hosted distribution: there is no store to push a build, so the app
+            // asks its own server whether the image it is talking to ships a newer APK.
+            UpdateSection()
 
             Spacer(Modifier.height(32.dp))
             OutlinedButton(onClick = viewModel::logout, modifier = Modifier.fillMaxWidth()) {

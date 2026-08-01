@@ -164,6 +164,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/client/version": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Bundled Android client version
+         * @description Metadata for the APK this server ships, so the Android app can offer an in-app update. Unauthenticated, like the /picweight.apk download it describes. Always 200: a server with no bundled APK answers `available: false` with `version_code: 0`, which the client reads as "up to date".
+         */
+        get: operations["client_version"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/days/{date}": {
         parameters: {
             query?: never;
@@ -448,6 +468,61 @@ export interface components {
             mobile_client_id?: string | null;
             /** @description Scopes to request. */
             scopes: string[];
+        };
+        /**
+         * @description `GET /api/v1/client/version` response — the bundled Android build.
+         *
+         *     Every field is non-nullable, so a generated client needs no null-handling at
+         *     all: "no APK bundled" is expressed by `available: false` with
+         *     `version_code: 0`, not by absent fields and not by an error status.
+         */
+        ClientVersionResponse: {
+            /**
+             * @description Whether this server has an APK to offer at all.
+             *
+             *     `false` for a backend-only build, for local development, and whenever
+             *     the bundled metadata is unusable. A client that only compares version
+             *     codes does not need to read this — it exists so a "check for updates"
+             *     screen can say "this server does not ship an APK" instead of the
+             *     misleading "you are up to date".
+             */
+            available: boolean;
+            /**
+             * @description Server-relative path the APK downloads from, always populated so the
+             *     client never hardcodes it.
+             */
+            download_path: string;
+            /**
+             * @description Lowercase hex SHA-256 of the APK at `download_path`.
+             *
+             *     Empty when `available` is `false`. The client must verify the downloaded
+             *     bytes against this before handing them to the installer.
+             */
+            sha256: string;
+            /**
+             * Format: int64
+             * @description Size of the APK in bytes, so a client can show download progress and
+             *     reject an obviously truncated response early. `0` when unavailable.
+             */
+            size_bytes: number;
+            /**
+             * Format: int32
+             * @description `versionCode` of the bundled APK: the git commit count, monotonic on
+             *     master.
+             *
+             *     `0` when `available` is `false`. This is the only field an update
+             *     decision may be based on, and only as
+             *     `version_code > BuildConfig.VERSION_CODE` — never `!=`, which would
+             *     offer a downgrade after a rollback.
+             */
+            version_code: number;
+            /**
+             * @description `versionName` of the bundled APK — a tag (`1.2.3`) or `master+<sha>`.
+             *
+             *     Empty when `available` is `false`. Display only: version *names* are not
+             *     ordered and must never be compared.
+             */
+            version_name: string;
         };
         /**
          * @description The multipart form accepted by `POST /api/v1/meals`.
@@ -1729,6 +1804,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    client_version: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bundled APK, or `available: false` when there is none */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClientVersionResponse"];
                 };
             };
         };

@@ -6,6 +6,46 @@ plugins {
     id("org.openapi.generator") version "7.20.0"
 }
 
+// ---------------------------------------------------------------------------
+// Version identity
+//
+// The in-app updater compares BuildConfig.VERSION_CODE against the version_code
+// the server advertises for the APK it ships, and only offers the update when the
+// server's is strictly greater. That comparison is worthless unless every build
+// gets a distinct, increasing code, so `-PversionCode` is supplied by CI as the
+// git commit count (`git rev-list --count HEAD`) — monotonic on master, which a
+// version derived from tags alone is not. The Docker build cannot compute it
+// (.dockerignore excludes .git) and receives it as the PICWEIGHT_VERSION_CODE
+// build arg instead.
+//
+// The fallbacks below exist for LOCAL developer builds only and are deliberately
+// unmistakable: code 1 can never out-rank anything a server ships, and the name
+// says "dev" so it reads as one in the updater UI. The previous silent fallback
+// to 1 / "1.0.0" was the bug this feature has to avoid — every master image
+// claimed to be version 1, so the client compared 1 against 1 and answered
+// "up to date" forever.
+// ---------------------------------------------------------------------------
+val versionCodeProperty = (project.findProperty("versionCode") as? String)?.trim()
+val versionNameProperty = (project.findProperty("versionName") as? String)?.trim()
+
+// An explicitly supplied but unparseable code fails the build rather than
+// degrading to 1: a CI job that passes garbage must not produce an APK that
+// looks releasable and can never be updated.
+val picweightVersionCode: Int = versionCodeProperty.let { raw ->
+    if (raw.isNullOrEmpty()) {
+        1
+    } else {
+        raw.toIntOrNull()?.takeIf { it > 0 }
+            ?: throw GradleException(
+                "-PversionCode must be a positive integer, got '$raw'"
+            )
+    }
+}
+
+val picweightVersionName: String = versionNameProperty.let { raw ->
+    if (raw.isNullOrEmpty()) "0.0.0-dev" else raw
+}
+
 android {
     namespace = "dev.picweight.android"
     compileSdk = 36
@@ -14,8 +54,8 @@ android {
         applicationId = "dev.picweight.android"
         minSdk = 26
         targetSdk = 36
-        versionCode = (project.findProperty("versionCode") as String?)?.toIntOrNull() ?: 1
-        versionName = (project.findProperty("versionName") as String?) ?: "1.0.0"
+        versionCode = picweightVersionCode
+        versionName = picweightVersionName
 
         manifestPlaceholders["appAuthRedirectScheme"] = "dev.picweight.android"
     }
@@ -64,6 +104,11 @@ android {
 
     buildFeatures {
         compose = true
+        // AGP 8+ only generates BuildConfig on request. The in-app updater needs
+        // BuildConfig.VERSION_CODE to compare against the server's advertised
+        // build and BuildConfig.VERSION_NAME to show the user what they are
+        // running, so the values above have to reach app code.
+        buildConfig = true
     }
 
     testOptions {

@@ -220,12 +220,24 @@ pub struct TestApp {
 impl TestApp {
     /// Boot everything: mocks, database, workers, router, listener.
     pub async fn start() -> TestApp {
+        TestApp::start_with_static_files(&[]).await
+    }
+
+    /// Boot with extra files planted in `static/` before the server starts.
+    ///
+    /// Used by the `/api/v1/client/version` tests: the bundled-APK sidecar is
+    /// read once, in `AppState::new`, so it has to exist before the app boots —
+    /// exactly as it does in the image, where the Docker build writes it.
+    pub async fn start_with_static_files(files: &[(&str, &[u8])]) -> TestApp {
         let tmp = tempfile::tempdir().expect("temp dir");
         let data_path = tmp.path().join("data");
         let static_dir = tmp.path().join("static");
         std::fs::create_dir_all(data_path.join("thumbs")).expect("thumbs dir");
         std::fs::create_dir_all(&static_dir).expect("static dir");
         std::fs::write(static_dir.join("index.html"), SPA_INDEX).expect("index.html");
+        for (name, contents) in files {
+            std::fs::write(static_dir.join(name), contents).expect("static file");
+        }
 
         // --- mock IdP -----------------------------------------------------
         let idp_listener = tokio::net::TcpListener::bind(local_addr())

@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type ServerSentEventsResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
+import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, ClientVersionData, ClientVersionResponses, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -92,6 +92,13 @@ export const resolveBarcode = <ThrowOnError extends boolean = false>(options: Op
     url: '/api/v1/barcode/{ean}',
     ...options
 });
+
+/**
+ * Bundled Android client version
+ *
+ * Metadata for the APK this server ships, so the Android app can offer an in-app update. Unauthenticated, like the /picweight.apk download it describes. Always 200: a server with no bundled APK answers `available: false` with `version_code: 0`, which the client reads as "up to date".
+ */
+export const clientVersion = <ThrowOnError extends boolean = false>(options?: Options<ClientVersionData, ThrowOnError>): RequestResult<ClientVersionResponses, unknown, ThrowOnError> => (options?.client ?? client).get<ClientVersionResponses, unknown, ThrowOnError>({ url: '/api/v1/client/version', ...options });
 
 /**
  * Get a day's totals and remaining budget

@@ -76,6 +76,13 @@ pub struct AppState {
     /// Shared outbound HTTP client (Open Food Facts, web search). rig owns the
     /// OpenAI transport separately.
     pub http: reqwest::Client,
+    /// Metadata for the APK this image bundles, resolved once at startup and
+    /// served by [`api::client::client_version`].
+    ///
+    /// Read here rather than per request because neither the APK nor its
+    /// sidecar can change without a new image, and `Arc` because `AppState` is
+    /// cloned for every request.
+    pub client_release: Arc<api::client::ClientVersionResponse>,
 }
 
 impl AppState {
@@ -84,6 +91,11 @@ impl AppState {
     /// The [`jobs::JobQueue`] must be created first (its receiver is handed to
     /// [`jobs::spawn_workers`] after this returns), because `AppState` itself
     /// carries the sender that API handlers use to enqueue work.
+    ///
+    /// The bundled-APK metadata is read here, from `config.static_dir`, rather
+    /// than taken as an argument — it is derived state, and
+    /// [`api::client::load_bundled_release`] is infallible by construction, so
+    /// a missing or broken sidecar cannot stop the server from starting.
     pub fn new(
         pool: DbPool,
         config: Arc<Config>,
@@ -93,6 +105,7 @@ impl AppState {
         jobs: jobs::JobQueue,
         http: reqwest::Client,
     ) -> Self {
+        let client_release = Arc::new(api::client::load_bundled_release(&config.static_dir));
         Self {
             pool,
             config,
@@ -101,6 +114,7 @@ impl AppState {
             events,
             jobs,
             http,
+            client_release,
         }
     }
 
@@ -134,13 +148,18 @@ impl AppState {
 /// Layering, ported from phos `backend/src/main.rs`:
 ///
 /// ```text
-/// /healthz            → liveness, no auth
-/// /api/auth/*         → OIDC login, no auth
-/// /api/v1/*           → guarded by `auth::require_auth`
-/// /api/docs           → Scalar, rendering `api::ApiDoc`
-/// /api/**             → JSON 404 (an unmatched API path is never the SPA)
-/// everything else     → ServeDir(static_dir), falling back to index.html
+/// /healthz                  → liveness, no auth
+/// /api/auth/*               → OIDC login, no auth
+/// /api/v1/client/version    → bundled-APK metadata, no auth (see below)
+/// /api/v1/*                 → guarded by `auth::require_auth`
+/// /api/docs                 → Scalar, rendering `api::ApiDoc`
+/// /api/**                   → JSON 404 (an unmatched API path is never the SPA)
+/// everything else           → ServeDir(static_dir), falling back to index.html
 /// ```
+///
+/// `/api/v1/client/version` is merged from [`api::create_public_router`], so it
+/// never meets the auth layer. It describes the `/picweight.apk` the static
+/// fallback already hands to anyone — see [`api::client::client_version`].
 ///
 /// Two deliberate divergences from phos's `main.rs:394`:
 ///

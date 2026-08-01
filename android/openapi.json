@@ -319,6 +319,28 @@
         ]
       }
     },
+    "/api/v1/client/version": {
+      "get": {
+        "tags": [
+          "client"
+        ],
+        "summary": "Bundled Android client version",
+        "description": "Metadata for the APK this server ships, so the Android app can offer an in-app update. Unauthenticated, like the /picweight.apk download it describes. Always 200: a server with no bundled APK answers `available: false` with `version_code: 0`, which the client reads as \"up to date\".",
+        "operationId": "client_version",
+        "responses": {
+          "200": {
+            "description": "The bundled APK, or `available: false` when there is none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientVersionResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/days/{date}": {
       "get": {
         "tags": [
@@ -1263,6 +1285,46 @@
               "type": "string"
             },
             "description": "Scopes to request."
+          }
+        }
+      },
+      "ClientVersionResponse": {
+        "type": "object",
+        "description": "`GET /api/v1/client/version` response — the bundled Android build.\n\nEvery field is non-nullable, so a generated client needs no null-handling at\nall: \"no APK bundled\" is expressed by `available: false` with\n`version_code: 0`, not by absent fields and not by an error status.",
+        "required": [
+          "available",
+          "version_name",
+          "version_code",
+          "sha256",
+          "size_bytes",
+          "download_path"
+        ],
+        "properties": {
+          "available": {
+            "type": "boolean",
+            "description": "Whether this server has an APK to offer at all.\n\n`false` for a backend-only build, for local development, and whenever\nthe bundled metadata is unusable. A client that only compares version\ncodes does not need to read this — it exists so a \"check for updates\"\nscreen can say \"this server does not ship an APK\" instead of the\nmisleading \"you are up to date\"."
+          },
+          "download_path": {
+            "type": "string",
+            "description": "Server-relative path the APK downloads from, always populated so the\nclient never hardcodes it."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Lowercase hex SHA-256 of the APK at `download_path`.\n\nEmpty when `available` is `false`. The client must verify the downloaded\nbytes against this before handing them to the installer."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size of the APK in bytes, so a client can show download progress and\nreject an obviously truncated response early. `0` when unavailable."
+          },
+          "version_code": {
+            "type": "integer",
+            "format": "int32",
+            "description": "`versionCode` of the bundled APK: the git commit count, monotonic on\nmaster.\n\n`0` when `available` is `false`. This is the only field an update\ndecision may be based on, and only as\n`version_code > BuildConfig.VERSION_CODE` — never `!=`, which would\noffer a downgrade after a rollback."
+          },
+          "version_name": {
+            "type": "string",
+            "description": "`versionName` of the bundled APK — a tag (`1.2.3`) or `master+<sha>`.\n\nEmpty when `available` is `false`. Display only: version *names* are not\nordered and must never be compared."
           }
         }
       },
@@ -3226,6 +3288,10 @@
     {
       "name": "export",
       "description": "Data export"
+    },
+    {
+      "name": "client",
+      "description": "Android client distribution and in-app update"
     },
     {
       "name": "system",

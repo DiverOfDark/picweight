@@ -1,6 +1,7 @@
 package dev.picweight.android.data.remote
 
 import dev.picweight.android.data.remote.model.AuthConfigResponse
+import dev.picweight.android.data.remote.model.ClientVersionResponse
 import dev.picweight.android.data.remote.model.DayResponse
 import dev.picweight.android.data.remote.model.FoodResponse
 import dev.picweight.android.data.remote.model.GroupResponse
@@ -137,4 +138,17 @@ interface PicweightApi {
 
     @GET("api/v1/weights")
     suspend fun listWeights(@Query("limit") limit: Long? = null): List<WeightLogResponse>
+
+    // ---- in-app update ----------------------------------------------------
+
+    /**
+     * The Android build this server ships at `/picweight.apk`.
+     *
+     * Unauthenticated, like the APK itself — it describes a file anyone can already
+     * download, so requiring a session would only mean the check breaks in exactly the
+     * situation an update is most likely to fix. Never a 404 on a current server: a
+     * deployment with no APK answers `available: false`.
+     */
+    @GET("api/v1/client/version")
+    suspend fun getClientVersion(): ClientVersionResponse
 }

@@ -1,15 +1,16 @@
 //! The HTTP surface.
 //!
 //! Everything versioned lives under [`crate::API_PREFIX`] (`/api/v1`) and is
-//! behind [`crate::auth::require_auth`]. `/api/auth/*` (see [`crate::auth`]) and
-//! `/healthz` are the only unauthenticated routes; everything else falls
-//! through to the static SPA (PRD §7).
+//! behind [`crate::auth::require_auth`]. `/api/auth/*` (see [`crate::auth`]),
+//! `/healthz` and [`client::client_version`] are the only unauthenticated
+//! routes; everything else falls through to the static SPA (PRD §7).
 //!
 //! Every route is `utoipa`-annotated so `android/openapi.json` regenerates
 //! cleanly — the Android Retrofit client is *generated* from that spec, so an
 //! un-annotated route is a route the phone cannot call.
 
 pub mod barcode;
+pub mod client;
 pub mod days;
 pub mod dishes;
 pub mod events;
@@ -72,6 +73,8 @@ a server-side estimation agent returns calories and macros.",
         weights::list_weights,
         // Export
         export::export_data,
+        // Android client distribution
+        client::client_version,
         // System
         healthz,
     ),
@@ -137,6 +140,8 @@ a server-side estimation agent returns calories and macros.",
         // Export
         export::ExportDocument,
         export::ExportFormat,
+        // Android client distribution
+        client::ClientVersionResponse,
         // System
         HealthResponse,
     )),
@@ -151,6 +156,7 @@ a server-side estimation agent returns calories and macros.",
         (name = "barcode", description = "Packaged-goods lookup"),
         (name = "weights", description = "Weight logging"),
         (name = "export", description = "Data export"),
+        (name = "client", description = "Android client distribution and in-app update"),
         (name = "system", description = "Health and version"),
     ),
 )]
@@ -262,8 +268,16 @@ pub fn create_router(state: AppState) -> Router {
 }
 
 /// Public routes that must work without a session.
+///
+/// `/api/v1/client/version` is here rather than in [`create_router`] on
+/// purpose: it describes `/picweight.apk`, which the static fallback already
+/// serves to anyone, and an app whose session has expired still has to be able
+/// to discover that a newer build exists. See [`client::client_version`] for
+/// the full argument that this discloses nothing the public download does not.
 pub fn create_public_router() -> Router<AppState> {
-    Router::new().route("/healthz", get(healthz))
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/api/v1/client/version", get(client::client_version))
 }
 
 #[cfg(test)]
@@ -288,6 +302,7 @@ mod tests {
             "/api/v1/barcode/{ean}",
             "/api/v1/weights",
             "/api/v1/export",
+            "/api/v1/client/version",
             "/healthz",
         ] {
             assert!(json.contains(path), "spec is missing {path}");

@@ -13,10 +13,18 @@
 # Build:
 #   DOCKER_BUILDKIT=1 docker build \
 #     --build-arg PICWEIGHT_VERSION=v1.2.3 \
+#     --build-arg PICWEIGHT_VERSION_CODE=$(git rev-list --count HEAD) \
 #     --secret id=keystore_password,env=KEYSTORE_PASSWORD \
 #     -t picweight .
+#
+# PICWEIGHT_VERSION_CODE is the Android versionCode and MUST come from outside:
+# .dockerignore excludes .git, so no stage in here can count commits itself. CI
+# passes `git rev-list --count HEAD`, which is monotonic on master rather than
+# only on tags — the in-app updater compares that number against what the running
+# APK reports, so a value that does not increase means "up to date" forever.
 
 ARG PICWEIGHT_VERSION=dev
+ARG PICWEIGHT_VERSION_CODE=1
 
 # ---------------------------------------------------------------------------
 # Stage 1 — frontend (Vue 3 + Vite + Tailwind 4)
@@ -130,24 +138,59 @@ WORKDIR /app/android
 COPY android/ ./
 COPY --from=backend-builder /app/openapi.json ./openapi.json
 ARG PICWEIGHT_VERSION
+ARG PICWEIGHT_VERSION_CODE
 # Signed release when the keystore_password secret is provided, unsigned
-# otherwise. versionName/versionCode are derived from PICWEIGHT_VERSION when it
-# is a semver tag. Shell logic ported from phos.
+# otherwise. Keystore logic ported from phos.
+#
+# versionName AND versionCode are passed to Gradle on EVERY build, not only for
+# semver tags. The old "derive them from PICWEIGHT_VERSION when it looks like
+# semver" rule fell through on a master push (PICWEIGHT_VERSION is "master"), so
+# every master image shipped versionCode 1 / versionName 1.0.0 and the in-app
+# updater compared 1 against 1 forever.
+#
+# versionCode is the commit count handed in by CI rather than anything derived
+# from the tag: mixing the two schemes would let a tag (v1.0.0 -> 10000) outrank
+# every subsequent master build, which is the same "never updates" failure with
+# extra steps.
+#
+# The sidecar picweight.apk.json is written from the SAME two values given to
+# Gradle, and then checked against what aapt2 reads back out of the APK, so what
+# the server advertises at /api/v1/client/version cannot disagree with what the
+# client will actually install. Its version_name is JSON-escaped because a git
+# ref may legally contain a quote or a backslash, and unparseable metadata would
+# take the update endpoint down with it.
 RUN --mount=type=cache,target=/root/.gradle \
     --mount=type=secret,id=keystore_password \
+    set -eu; \
     if [ -s /run/secrets/keystore_password ]; then \
-        export KEYSTORE_PASSWORD="$(cat /run/secrets/keystore_password)"; \
-    fi && \
-    VER="${PICWEIGHT_VERSION#v}" && VERSION_ARGS="" && \
-    case "$VER" in \
-      [0-9]*.[0-9]*.[0-9]*) \
-        MAJOR="${VER%%.*}"; REST="${VER#*.}"; MINOR="${REST%%.*}"; \
-        PATCH="${REST#*.}"; PATCH="${PATCH%%[!0-9]*}"; \
-        VERSION_ARGS="-PversionName=${VER} -PversionCode=$((MAJOR * 10000 + MINOR * 100 + PATCH))" ;; \
-    esac && \
-    chmod +x gradlew && \
-    ./gradlew --no-daemon assembleRelease ${VERSION_ARGS} && \
-    cp app/build/outputs/apk/release/app-release*.apk /picweight.apk
+        KEYSTORE_PASSWORD="$(cat /run/secrets/keystore_password)"; \
+        export KEYSTORE_PASSWORD; \
+    fi; \
+    VERSION_NAME="${PICWEIGHT_VERSION:-dev}"; \
+    case "$VERSION_NAME" in \
+      v[0-9]*.[0-9]*.[0-9]*) VERSION_NAME="${VERSION_NAME#v}" ;; \
+    esac; \
+    VERSION_CODE="${PICWEIGHT_VERSION_CODE:-1}"; \
+    case "$VERSION_CODE" in \
+      ''|0|*[!0-9]*) \
+        echo "PICWEIGHT_VERSION_CODE must be a positive integer, got '${VERSION_CODE}'" >&2; \
+        exit 1 ;; \
+    esac; \
+    chmod +x gradlew; \
+    ./gradlew --no-daemon assembleRelease \
+        "-PversionName=${VERSION_NAME}" "-PversionCode=${VERSION_CODE}"; \
+    cp app/build/outputs/apk/release/app-release*.apk /picweight.apk; \
+    BADGING="$(${ANDROID_HOME}/build-tools/36.0.0/aapt2 dump badging /picweight.apk | head -1)"; \
+    case "$BADGING" in \
+      *"versionCode='${VERSION_CODE}'"*"versionName='${VERSION_NAME}'"*) ;; \
+      *) echo "APK does not carry the requested version: ${BADGING}" >&2; exit 1 ;; \
+    esac; \
+    SHA256="$(sha256sum /picweight.apk | cut -d' ' -f1)"; \
+    SIZE_BYTES="$(stat -c %s /picweight.apk)"; \
+    NAME_JSON="$(printf '%s' "$VERSION_NAME" | sed 's/\\/\\\\/g; s/"/\\"/g')"; \
+    printf '{"version_name":"%s","version_code":%s,"sha256":"%s","size_bytes":%s}\n' \
+        "$NAME_JSON" "$VERSION_CODE" "$SHA256" "$SIZE_BYTES" > /picweight.apk.json; \
+    cat /picweight.apk.json
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime
@@ -168,8 +211,15 @@ COPY --from=backend-builder /usr/local/bin/picweight-backend ./picweight-backend
 # Built SPA — served by the static fallback under every non-/api path
 COPY --from=frontend-builder /app/frontend/dist ./static
 
-# APK, served at /picweight.apk and linked from the web UI's download card
+# APK, served at /picweight.apk and linked from the web UI's download card.
+#
+# The sidecar next to it is what GET /api/v1/client/version reads: the app compares
+# its own BuildConfig.VERSION_CODE against version_code, and verifies the download
+# against sha256 before installing it. It has to travel with the APK — metadata
+# describing a *different* build is worse than none, because the client would
+# reject every download as corrupt.
 COPY --from=android-builder /picweight.apk ./static/picweight.apk
+COPY --from=android-builder /picweight.apk.json ./static/picweight.apk.json
 
 # SQLite database + thumbs/ live here; the Helm chart mounts the PVC over it.
 RUN mkdir -p data/thumbs && chown -R picweight:picweight /app

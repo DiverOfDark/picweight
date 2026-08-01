@@ -7,6 +7,17 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        In-app update (self-hosted distribution; there is no Play Store here). Lets the
+        app hand the APK it downloaded from its own server to PackageInstaller. It does
+        NOT install anything silently: Android still shows its own confirmation dialog,
+        and the user must additionally have granted "install unknown apps" for this app,
+        which `PackageManager.canRequestPackageInstalls()` is checked against first.
+        Before that dialog the app verifies the download's SHA-256 against the digest
+        the server published and that its signing certificate matches the running app's.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
 
     <application
@@ -68,6 +79,20 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!--
+            PackageInstaller session status. Not exported: the only sender is the
+            platform, via a PendingIntent this app created, and an explicit action keeps
+            an unrelated broadcast from being read as an install result.
+        -->
+        <receiver
+            android:name=".update.InstallStatusReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="dev.picweight.android.INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
 
         <!-- WorkManager is configured by Hilt (PicweightApplication), not androidx.startup. -->
         <provider

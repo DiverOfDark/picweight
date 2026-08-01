@@ -27,6 +27,60 @@ export type AuthConfigResponse = {
 };
 
 /**
+ * `GET /api/v1/client/version` response — the bundled Android build.
+ *
+ * Every field is non-nullable, so a generated client needs no null-handling at
+ * all: "no APK bundled" is expressed by `available: false` with
+ * `version_code: 0`, not by absent fields and not by an error status.
+ */
+export type ClientVersionResponse = {
+    /**
+     * Whether this server has an APK to offer at all.
+     *
+     * `false` for a backend-only build, for local development, and whenever
+     * the bundled metadata is unusable. A client that only compares version
+     * codes does not need to read this — it exists so a "check for updates"
+     * screen can say "this server does not ship an APK" instead of the
+     * misleading "you are up to date".
+     */
+    available: boolean;
+    /**
+     * Server-relative path the APK downloads from, always populated so the
+     * client never hardcodes it.
+     */
+    download_path: string;
+    /**
+     * Lowercase hex SHA-256 of the APK at `download_path`.
+     *
+     * Empty when `available` is `false`. The client must verify the downloaded
+     * bytes against this before handing them to the installer.
+     */
+    sha256: string;
+    /**
+     * Size of the APK in bytes, so a client can show download progress and
+     * reject an obviously truncated response early. `0` when unavailable.
+     */
+    size_bytes: number;
+    /**
+     * `versionCode` of the bundled APK: the git commit count, monotonic on
+     * master.
+     *
+     * `0` when `available` is `false`. This is the only field an update
+     * decision may be based on, and only as
+     * `version_code > BuildConfig.VERSION_CODE` — never `!=`, which would
+     * offer a downgrade after a rollback.
+     */
+    version_code: number;
+    /**
+     * `versionName` of the bundled APK — a tag (`1.2.3`) or `master+<sha>`.
+     *
+     * Empty when `available` is `false`. Display only: version *names* are not
+     * ordered and must never be compared.
+     */
+    version_name: string;
+};
+
+/**
  * The multipart form accepted by `POST /api/v1/meals`.
  *
  * Declared for the OpenAPI spec; the handler reads the parts directly because
@@ -1466,6 +1520,22 @@ export type ResolveBarcodeResponses = {
 };
 
 export type ResolveBarcodeResponse = ResolveBarcodeResponses[keyof ResolveBarcodeResponses];
+
+export type ClientVersionData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/client/version';
+};
+
+export type ClientVersionResponses = {
+    /**
+     * The bundled APK, or `available: false` when there is none
+     */
+    200: ClientVersionResponse;
+};
+
+export type ClientVersionResponse2 = ClientVersionResponses[keyof ClientVersionResponses];
 
 export type GetDayData = {
     body?: never;

@@ -58,3 +58,7 @@ serde_json = "1"
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
 image = "0.25"
+# The in-app-update tests hash the fake APK they plant in `static/` and assert
+# `/api/v1/client/version` advertises the digest of the bytes `/picweight.apk`
+# actually serves — the client's step 1 → step 2, end to end.
+sha2 = "0.10"

@@ -19,6 +19,7 @@
 //! | the correction costs one turn, not another full loop | same test |
 //! | day state after a confirmed meal | [`a_confirmed_meal_lands_in_the_day_view`] |
 //! | static fallback vs. a 404 on `/api` | [`an_unknown_page_falls_through_to_the_spa`] |
+//! | the APK the client updates itself from | [`the_bundled_apk_is_advertised_without_a_session`] |
 //!
 //! Mifflin-St Jeor, macro split and local-day/DST bucketing are exercised
 //! exhaustively as unit tests in `nutrition::targets` and `feedback::state`.
@@ -188,6 +189,142 @@ async fn the_auth_routes_stay_reachable_without_a_session() {
         location.starts_with(&app.issuer),
         "login must bounce to the IdP, got {location:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// In-app update — GET /api/v1/client/version
+// ---------------------------------------------------------------------------
+
+/// Stand-in for the APK the image bundles. Content is irrelevant; only its
+/// length and digest are, and both have to be real for the round trip below.
+const FAKE_APK: &[u8] = b"not really an APK, but it hashes and it has a length";
+
+/// Lowercase hex SHA-256, the form `sha256sum` emits and the sidecar carries.
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// The sidecar the `android-builder` stage writes, for a given APK.
+fn sidecar_for(apk: &[u8], version_name: &str, version_code: i32) -> String {
+    format!(
+        r#"{{"version_name":"{version_name}","version_code":{version_code},"sha256":"{}","size_bytes":{}}}
+"#,
+        sha256_hex(apk),
+        apk.len()
+    )
+}
+
+#[tokio::test]
+async fn the_bundled_apk_is_advertised_without_a_session() {
+    let sidecar = sidecar_for(FAKE_APK, "master+b5fcc95", 12);
+    let app = TestApp::start_with_static_files(&[
+        ("picweight.apk", FAKE_APK),
+        ("picweight.apk.json", sidecar.as_bytes()),
+    ])
+    .await;
+
+    // No bearer token: an app whose session has expired still has to be able to
+    // discover a newer build.
+    let response = app
+        .http
+        .get(app.url("/api/v1/client/version"))
+        .send()
+        .await
+        .expect("GET /api/v1/client/version");
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.expect("version body");
+
+    assert_eq!(body["available"], true);
+    assert_eq!(body["version_name"], "master+b5fcc95");
+    assert_eq!(body["version_code"], 12);
+    assert_eq!(body["sha256"], sha256_hex(FAKE_APK));
+    assert_eq!(body["size_bytes"], FAKE_APK.len());
+    assert_eq!(body["download_path"], "/picweight.apk");
+
+    // The client's step 1 → step 2: fetch what `download_path` names and check
+    // it against the advertised digest. A digest that describes a *different*
+    // build would make every install attempt fail as corrupt, so this is the
+    // assertion that keeps the sidecar honest.
+    let download = app
+        .http
+        .get(app.url(body["download_path"].as_str().expect("download_path")))
+        .send()
+        .await
+        .expect("GET the APK");
+    assert_eq!(download.status(), 200);
+    let bytes = download.bytes().await.expect("apk bytes");
+    assert_eq!(sha256_hex(&bytes), body["sha256"].as_str().expect("sha256"));
+}
+
+#[tokio::test]
+async fn a_backend_only_build_reports_no_client_update() {
+    // No APK, no sidecar — a `cargo run` on a laptop, or an image built without
+    // the android stage. Must read as "up to date", never as a failure: the
+    // check runs unprompted on app start, and a non-2xx there is what
+    // resurrects the "offline" confusion.
+    let app = TestApp::start().await;
+
+    let response = app
+        .http
+        .get(app.url("/api/v1/client/version"))
+        .send()
+        .await
+        .expect("GET /api/v1/client/version");
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.expect("version body");
+
+    assert_eq!(body["available"], false);
+    // The client updates only on `server > BuildConfig.VERSION_CODE`, and the
+    // lowest version code any installed build can carry is 1.
+    assert_eq!(body["version_code"], 0);
+    assert_eq!(body["version_name"], "");
+    assert_eq!(body["sha256"], "");
+    assert_eq!(body["size_bytes"], 0);
+    // Still published, so the client never hardcodes the path.
+    assert_eq!(body["download_path"], "/picweight.apk");
+}
+
+#[tokio::test]
+async fn malformed_apk_metadata_never_reaches_the_client_as_an_error() {
+    // A sidecar the build somehow mangled. The server must not 500 and must not
+    // panic — it advertises nothing, logs for the operator, and the app carries
+    // on working.
+    let app = TestApp::start_with_static_files(&[
+        ("picweight.apk", FAKE_APK),
+        ("picweight.apk.json", b"{\"version_name\": \"1.2.3\", trunc"),
+    ])
+    .await;
+
+    let response = app
+        .http
+        .get(app.url("/api/v1/client/version"))
+        .send()
+        .await
+        .expect("GET /api/v1/client/version");
+    assert_eq!(
+        response.status(),
+        200,
+        "a misbuilt sidecar is the operator's problem, not a client error"
+    );
+    let body: serde_json::Value = response.json().await.expect("version body");
+    assert_eq!(body["available"], false);
+    assert_eq!(body["version_code"], 0);
+
+    // And the rest of the app is unaffected.
+    let health = app
+        .http
+        .get(app.url("/healthz"))
+        .send()
+        .await
+        .expect("GET /healthz");
+    assert_eq!(health.status(), 200);
 }
 
 // ---------------------------------------------------------------------------
