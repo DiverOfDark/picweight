@@ -99,6 +99,15 @@ openai:
   model: "gpt-5.4-mini"
   # Override for an OpenAI-compatible proxy (LiteLLM, vLLM, Azure).
   baseUrl: ""
+  # Token rates for the AI usage screen: `prefix=input/output`, comma-separated,
+  # micro-USD per million tokens. The compiled-in table cannot know what you pay
+  # — rates change, new models land between releases, and behind a proxy the
+  # number may be nothing like OpenAI's list price. Left unset, the screen still
+  # works but labels its dollars as a guess rather than passing them off as a
+  # total. Cost is derived from stored token counts, so setting this reprices
+  # existing history too.
+  #   modelPricing: "gpt-5.4-mini=250000/2000000"   # $0.25 in / $2.00 out
+  modelPricing: ""
 
 oidc:
   issuer: https://auth.example.com

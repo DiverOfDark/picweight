@@ -812,6 +812,63 @@ pub const MODEL_PRICING: &[(&str, i64, i64)] = &[
 /// Fallback rate for an unrecognized model, in micro-USD per million tokens.
 pub const DEFAULT_PRICING: (i64, i64) = (2_000_000, 8_000_000);
 
+/// Where a rate came from — the difference between a figure worth trusting and
+/// a placeholder.
+///
+/// Surfaced all the way to the usage screen on purpose. A cost derived from a
+/// rate the operator supplied is a real number; one derived from
+/// [`DEFAULT_PRICING`] is a guess that happens to have a dollar sign in front of
+/// it. Rendering the two identically would repeat the mistake that made the
+/// OpenAPI document lie about its own enum casing: authoritative-looking output
+/// that nothing actually backs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PricingSource {
+    /// Matched an entry in `PICWEIGHT_MODEL_PRICING`. Trust this.
+    Configured,
+    /// Matched the compiled-in table. Correct when it was written; unversioned.
+    BuiltIn,
+    /// Nothing matched — [`DEFAULT_PRICING`] was applied. Treat as an order of
+    /// magnitude, not a number.
+    Fallback,
+}
+
+/// Resolve the input/output rate for a model, and say where it came from.
+///
+/// Longest prefix wins within each tier, so `gpt-4.1-mini` never matches
+/// `gpt-4.1` first. Operator-configured entries beat the built-in table
+/// outright: a self-hoster pointing at LiteLLM, vLLM or Azure pays rates this
+/// crate cannot know, and their number should win over ours.
+pub fn resolve_pricing(configured: &[(String, i64, i64)], model: &str) -> (i64, i64, PricingSource) {
+    let best = |candidates: &mut dyn Iterator<Item = (&str, i64, i64)>| {
+        candidates
+            .filter(|(prefix, _, _)| model.starts_with(prefix))
+            .max_by_key(|(prefix, _, _)| prefix.len())
+            .map(|(_, input, output)| (input, output))
+    };
+
+    if let Some((input, output)) = best(
+        &mut configured
+            .iter()
+            .map(|(p, i, o)| (p.as_str(), *i, *o)),
+    ) {
+        return (input, output, PricingSource::Configured);
+    }
+    if let Some((input, output)) =
+        best(&mut MODEL_PRICING.iter().map(|(p, i, o)| (*p, *i, *o)))
+    {
+        return (input, output, PricingSource::BuiltIn);
+    }
+    (DEFAULT_PRICING.0, DEFAULT_PRICING.1, PricingSource::Fallback)
+}
+
+/// Apply a resolved rate to a token count. Micro-USD, saturating.
+pub fn apply_rate(input_rate: i64, output_rate: i64, prompt: i64, completion: i64) -> i64 {
+    let input = prompt.max(0).saturating_mul(input_rate) / 1_000_000;
+    let output = completion.max(0).saturating_mul(output_rate) / 1_000_000;
+    input.saturating_add(output)
+}
+
 /// Estimated cost of one run, in micro-USD.
 pub fn estimate_cost_micro_usd(model: &str, prompt_tokens: i64, completion_tokens: i64) -> i64 {
     let (input_rate, output_rate) = MODEL_PRICING

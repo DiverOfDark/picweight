@@ -2,7 +2,7 @@
 
 import { type Client, type ClientMeta, formDataBodySerializer, type Options as Options2, type RequestResult, type ServerSentEventsResult, type TDataShape } from './client';
 import { client } from './client.gen';
-import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, ClientVersionData, ClientVersionResponses, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, RetryMealData, RetryMealErrors, RetryMealResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
+import type { AuthConfigData, AuthConfigResponses, CallbackData, CallbackErrors, ClientVersionData, ClientVersionResponses, CreateMealData, CreateMealErrors, CreateMealResponses, DeleteMealData, DeleteMealErrors, DeleteMealResponses, ExportDataData, ExportDataErrors, ExportDataResponses, GetDayData, GetDayErrors, GetDayResponses, GetGroupData, GetGroupErrors, GetGroupResponses, GetMealData, GetMealErrors, GetMealResponses, GetMealThumbnailData, GetMealThumbnailErrors, GetMealThumbnailResponses, GetMeData, GetMeErrors, GetMeResponses, GetUsageData, GetUsageErrors, GetUsageResponses, HealthzData, HealthzResponses, ListMealsData, ListMealsResponses, ListWeightsData, ListWeightsResponses, LoginData, LogoutData, LogWeightData, LogWeightErrors, LogWeightResponses, MealEventsData, MealEventsErrors, MealEventsResponse, MealEventsResponses, MealRevisionsData, MealRevisionsErrors, MealRevisionsResponses, PatchMealData, PatchMealErrors, PatchMealResponses, ReanalyzeMealData, ReanalyzeMealErrors, ReanalyzeMealResponses, RecentDishesData, RecentDishesResponses, RefreshData, RefreshErrors, RefreshResponses, ResolveBarcodeData, ResolveBarcodeErrors, ResolveBarcodeResponses, RetryMealData, RetryMealErrors, RetryMealResponses, SessionInfoData, SessionInfoErrors, SessionInfoResponses, TokenExchangeData, TokenExchangeErrors, TokenExchangeResponses, UpdateProfileData, UpdateProfileErrors, UpdateProfileResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -274,6 +274,17 @@ export const mealRevisions = <ThrowOnError extends boolean = false>(options: Opt
 export const getMealThumbnail = <ThrowOnError extends boolean = false>(options: Options<GetMealThumbnailData, ThrowOnError>): RequestResult<GetMealThumbnailResponses, GetMealThumbnailErrors, ThrowOnError> => (options.client ?? client).get<GetMealThumbnailResponses, GetMealThumbnailErrors, ThrowOnError>({
     security: [{ scheme: 'bearer', type: 'http' }],
     url: '/api/v1/meals/{id}/thumbnail',
+    ...options
+});
+
+/**
+ * Token and cost totals for the agent runs this user has caused
+ *
+ * Sums `analysis_jobs` for the caller. Cost is recomputed from token counts at the rates currently configured, never summed from the stored column, so correcting `PICWEIGHT_MODEL_PRICING` also corrects the history. Each model reports whether its rate was configured, compiled in, or a fallback guess.
+ */
+export const getUsage = <ThrowOnError extends boolean = false>(options?: Options<GetUsageData, ThrowOnError>): RequestResult<GetUsageResponses, GetUsageErrors, ThrowOnError> => (options?.client ?? client).get<GetUsageResponses, GetUsageErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/usage',
     ...options
 });
 

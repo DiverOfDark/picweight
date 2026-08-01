@@ -159,6 +159,14 @@ export const api = {
   /** Log a weight; the backend recomputes targets from it. */
   logWeight: (payload) => unwrap(sdk.logWeight({ body: payload })),
 
+  /**
+   * Token and cost totals for the agent runs this user caused.
+   *
+   * Cost is recomputed server-side from token counts at the rates currently
+   * configured, so it is an estimate that self-corrects when the rates do.
+   */
+  usage: (params) => unwrap(sdk.getUsage({ query: clean(params) })),
+
   /** Last N confirmed dishes. */
   recentDishes: (limit) => unwrap(sdk.recentDishes({ query: clean({ limit }) })),
 

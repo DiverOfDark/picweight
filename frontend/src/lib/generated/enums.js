@@ -90,6 +90,15 @@ export const NAME_SOURCE = Object.freeze({
 /** Every valid `NameSource` value, for exhaustiveness checks. */
 export const NAME_SOURCE_VALUES = Object.freeze(["vision","recent_chip","share_intent","comment","manual"])
 
+/** Where a rate came from — the difference between a figure worth trusting and */
+export const PRICING_SOURCE = Object.freeze({
+  CONFIGURED: "configured",
+  BUILT_IN: "built_in",
+  FALLBACK: "fallback",
+})
+/** Every valid `PricingSource` value, for exhaustiveness checks. */
+export const PRICING_SOURCE_VALUES = Object.freeze(["configured","built_in","fallback"])
+
 /** Biological sex, as required by the Mifflin-St Jeor BMR formula (§6). */
 export const SEX = Object.freeze({
   MALE: "male",

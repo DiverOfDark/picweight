@@ -296,6 +296,7 @@ impl TestApp {
             openai_base_url: llm_base,
             rust_log: "warn".to_string(),
             web_search_enabled: false,
+            model_pricing: Vec::new(),
         };
 
         let pool = db::establish_pool_from_url(&config.database_url).expect("pool");

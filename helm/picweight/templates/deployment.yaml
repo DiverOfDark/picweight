@@ -103,6 +103,13 @@ spec:
             - name: PICWEIGHT_OPENAI_MODEL
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.openai.modelPricing }}
+            # Token rates for the AI usage screen. Omitted entirely when unset,
+            # so the backend falls back to its own table and labels the result
+            # as an estimate rather than reporting a guess as a total.
+            - name: PICWEIGHT_MODEL_PRICING
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.openai.baseUrl }}
             - name: PICWEIGHT_OPENAI_BASE_URL
               value: {{ . | quote }}

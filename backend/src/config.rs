@@ -25,6 +25,7 @@
 //! | `PICWEIGHT_OPENAI_BASE_URL` | no | `https://api.openai.com/v1` |
 //! | `PICWEIGHT_RUST_LOG` / `RUST_LOG` | no | `info` |
 //! | `PICWEIGHT_WEB_SEARCH_ENABLED` | no | `false` (§5: config-gated, off by default) |
+//! | `PICWEIGHT_MODEL_PRICING` | no | empty = built-in table, then a fallback guess |
 
 use std::path::{Path, PathBuf};
 
@@ -143,6 +144,16 @@ pub struct Config {
     pub rust_log: String,
     /// Whether the agent's `web_search` tool is registered (§5, off by default).
     pub web_search_enabled: bool,
+    /// Operator-supplied token rates: `(model_prefix, micro_usd_per_million_in,
+    /// micro_usd_per_million_out)`.
+    ///
+    /// Exists because the compiled-in table cannot know what you pay. Rates
+    /// change, new models appear between releases, and a self-hoster pointing
+    /// `PICWEIGHT_OPENAI_BASE_URL` at LiteLLM, vLLM or Azure may pay something
+    /// unrelated to OpenAI's list price. Rather than shipping a table that goes
+    /// quietly stale and reporting its output as fact, the usage screen reports
+    /// which tier each figure came from.
+    pub model_pricing: Vec<(String, i64, i64)>,
 }
 
 impl Config {
@@ -214,6 +225,7 @@ impl Config {
             .unwrap_or_else(|| "info".to_string());
 
         let web_search_enabled = parse_bool("PICWEIGHT_WEB_SEARCH_ENABLED", false)?;
+        let model_pricing = parse_model_pricing(optional("PICWEIGHT_MODEL_PRICING").as_deref())?;
 
         Ok(Config {
             port,
@@ -236,6 +248,7 @@ impl Config {
             openai_base_url,
             rust_log,
             web_search_enabled,
+            model_pricing,
         })
     }
 
@@ -269,6 +282,68 @@ fn normalize_base_url(raw: String) -> String {
 }
 
 /// Read a variable that must be present and non-empty.
+/// Parse `PICWEIGHT_MODEL_PRICING`.
+///
+/// Format: comma-separated `prefix=input/output`, where the numbers are
+/// **micro-USD per million tokens** — the same unit `analysis_jobs.cost_micro_usd`
+/// is stored in, so nobody has to reason about a conversion.
+///
+/// ```text
+/// PICWEIGHT_MODEL_PRICING="gpt-5.4-mini=250000/2000000,gpt-4.1=2000000/8000000"
+/// ```
+///
+/// i.e. $0.25 per million input tokens and $2.00 per million output tokens.
+///
+/// Deliberately strict: a malformed entry is a startup error naming the offending
+/// text, not a silently dropped rate. Half-applied pricing is worse than none,
+/// because the resulting figure looks exactly as authoritative as a correct one.
+fn parse_model_pricing(raw: Option<&str>) -> Result<Vec<(String, i64, i64)>, ConfigError> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let invalid = |value: &str, reason: &str| ConfigError::Invalid {
+        name: "PICWEIGHT_MODEL_PRICING",
+        value: value.to_string(),
+        reason: format!(
+            "{reason}; expected comma-separated `prefix=input/output` in micro-USD \
+             per million tokens, e.g. `gpt-5.4-mini=250000/2000000`"
+        ),
+    };
+
+    raw.split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let (prefix, rates) = entry
+                .split_once('=')
+                .ok_or_else(|| invalid(entry, "no `=` between the model prefix and its rates"))?;
+            let (input, output) = rates
+                .split_once('/')
+                .ok_or_else(|| invalid(entry, "no `/` between the input and output rate"))?;
+
+            let prefix = prefix.trim();
+            if prefix.is_empty() {
+                return Err(invalid(entry, "the model prefix is empty"));
+            }
+            let parse = |v: &str, which: &str| -> Result<i64, ConfigError> {
+                v.trim()
+                    .parse::<i64>()
+                    .map_err(|e| invalid(entry, &format!("{which} rate is not an integer: {e}")))
+                    .and_then(|n| {
+                        if n < 0 {
+                            Err(invalid(entry, &format!("{which} rate is negative")))
+                        } else {
+                            Ok(n)
+                        }
+                    })
+            };
+
+            Ok((prefix.to_string(), parse(input, "input")?, parse(output, "output")?))
+        })
+        .collect()
+}
+
 fn required(name: &'static str) -> Result<String, ConfigError> {
     optional(name).ok_or(ConfigError::Missing(name))
 }

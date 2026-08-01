@@ -128,6 +128,28 @@ export type CreateMealForm = {
 };
 
 /**
+ * One day's totals, for the trend line.
+ */
+export type DailyUsage = {
+    /**
+     * Estimated spend, micro-USD.
+     */
+    cost_micro_usd: number;
+    /**
+     * `YYYY-MM-DD`, bucketed by the job's creation instant in UTC.
+     */
+    date: string;
+    /**
+     * Jobs that ran.
+     */
+    jobs: number;
+    /**
+     * Input + output tokens.
+     */
+    total_tokens: number;
+};
+
+/**
  * Totals, targets, remaining and the verdict line for one local day.
  */
 export type DayResponse = {
@@ -868,6 +890,44 @@ export type MealResponse = {
 export type MealStatus = 'pending' | 'analyzing' | 'needs_review' | 'confirmed' | 'failed';
 
 /**
+ * Spend and tokens for one model.
+ */
+export type ModelUsage = {
+    /**
+     * Output tokens.
+     */
+    completion_tokens: number;
+    /**
+     * Estimated spend, micro-USD, at current rates.
+     */
+    cost_micro_usd: number;
+    /**
+     * Input rate applied, micro-USD per million tokens.
+     */
+    input_rate_micro_usd: number;
+    /**
+     * Analysis jobs run on it in the window.
+     */
+    jobs: number;
+    /**
+     * Model id exactly as recorded on the job.
+     */
+    model: string;
+    /**
+     * Output rate applied, micro-USD per million tokens.
+     */
+    output_rate_micro_usd: number;
+    /**
+     * Whether that rate was configured, compiled in, or a fallback guess.
+     */
+    pricing_source: PricingSource;
+    /**
+     * Input tokens.
+     */
+    prompt_tokens: number;
+};
+
+/**
  * Which input path supplied the dish name. Instrumented in M4 to answer
  * PRD §14.2 — whether the zero-keyboard paths actually get used.
  */
@@ -937,6 +997,19 @@ export type PatchMealRequest = {
     portion_scale?: number | null;
     status?: null | MealStatus;
 };
+
+/**
+ * Where a rate came from — the difference between a figure worth trusting and
+ * a placeholder.
+ *
+ * Surfaced all the way to the usage screen on purpose. A cost derived from a
+ * rate the operator supplied is a real number; one derived from
+ * [`DEFAULT_PRICING`] is a guess that happens to have a dollar sign in front of
+ * it. Rendering the two identically would repeat the mistake that made the
+ * OpenAPI document lie about its own enum casing: authoritative-looking output
+ * that nothing actually backs.
+ */
+export type PricingSource = 'configured' | 'built_in' | 'fallback';
 
 /**
  * Body data and the targets derived from it.
@@ -1287,6 +1360,65 @@ export type UpdateProfileResponse = {
      * silently accepted (§6).
      */
     warnings: Array<string>;
+};
+
+/**
+ * Body of `GET /api/v1/usage`.
+ */
+export type UsageResponse = {
+    /**
+     * Per-day series, oldest first.
+     */
+    by_day: Array<DailyUsage>;
+    /**
+     * Per-model breakdown, most expensive first.
+     */
+    by_model: Array<ModelUsage>;
+    /**
+     * Output tokens.
+     */
+    completion_tokens: number;
+    /**
+     * Estimated spend across the window, micro-USD, at current rates.
+     */
+    cost_micro_usd: number;
+    /**
+     * Mean spend per analysed meal, micro-USD. Zero when nothing was analysed.
+     */
+    cost_per_meal_micro_usd: number;
+    /**
+     * Jobs that failed terminally — spend that bought nothing.
+     */
+    failed_jobs: number;
+    /**
+     * Window start, echoed back.
+     */
+    from: string;
+    /**
+     * True when any model in the window priced off the fallback, so the UI can
+     * caveat the headline number instead of presenting a guess as a total.
+     */
+    has_estimated_pricing: boolean;
+    /**
+     * Every analysis job in the window, whatever its outcome.
+     */
+    jobs: number;
+    /**
+     * Distinct meals analysed. Lower than `jobs` when retries or corrections ran.
+     */
+    meals: number;
+    /**
+     * Input tokens.
+     */
+    prompt_tokens: number;
+    /**
+     * Jobs that were a retry of an earlier attempt (`parent_job_id` set).
+     */
+    retried_jobs: number;
+    /**
+     * Window end, echoed back.
+     */
+    to: string;
 };
 
 /**
@@ -2015,6 +2147,40 @@ export type GetMealThumbnailResponses = {
      */
     200: unknown;
 };
+
+export type GetUsageData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Inclusive local start date, `YYYY-MM-DD`. Defaults to 30 days back.
+         */
+        from?: string | null;
+        /**
+         * Inclusive local end date, `YYYY-MM-DD`. Defaults to today.
+         */
+        to?: string | null;
+    };
+    url: '/api/v1/usage';
+};
+
+export type GetUsageErrors = {
+    /**
+     * No session
+     */
+    401: ErrorBody;
+};
+
+export type GetUsageError = GetUsageErrors[keyof GetUsageErrors];
+
+export type GetUsageResponses = {
+    /**
+     * Usage totals
+     */
+    200: UsageResponse;
+};
+
+export type GetUsageResponse = GetUsageResponses[keyof GetUsageResponses];
 
 export type ListWeightsData = {
     body?: never;

@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import {
   CalendarDays,
   Check,
+  Coins,
   Download,
   Images,
   LineChart as LineChartIcon,
@@ -44,6 +45,7 @@ const NAV = [
   { view: 'today', to: { name: 'today' }, label: 'Today', icon: CalendarDays },
   { view: 'history', to: { name: 'history' }, label: 'History', icon: Images },
   { view: 'trends', to: { name: 'trends' }, label: 'Trends', icon: LineChartIcon },
+  { view: 'usage', to: { name: 'usage' }, label: 'Usage', icon: Coins },
   { view: 'profile', to: { name: 'profile' }, label: 'Profile', icon: User },
 ]
 

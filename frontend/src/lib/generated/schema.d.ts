@@ -432,6 +432,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Token and cost totals for the agent runs this user has caused
+         * @description Sums `analysis_jobs` for the caller. Cost is recomputed from token counts at the rates currently configured, never summed from the stored column, so correcting `PICWEIGHT_MODEL_PRICING` also corrects the history. Each model reports whether its rate was configured, compiled in, or a fallback guess.
+         */
+        get: operations["get_usage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/weights": {
         parameters: {
             query?: never;
@@ -580,6 +600,26 @@ export interface components {
              * @description Minutes east of UTC at capture.
              */
             timezone_offset?: number | null;
+        };
+        /** @description One day's totals, for the trend line. */
+        DailyUsage: {
+            /**
+             * Format: int64
+             * @description Estimated spend, micro-USD.
+             */
+            cost_micro_usd: number;
+            /** @description `YYYY-MM-DD`, bucketed by the job's creation instant in UTC. */
+            date: string;
+            /**
+             * Format: int64
+             * @description Jobs that ran.
+             */
+            jobs: number;
+            /**
+             * Format: int64
+             * @description Input + output tokens.
+             */
+            total_tokens: number;
         };
         /** @description Totals, targets, remaining and the verdict line for one local day. */
         DayResponse: {
@@ -1180,6 +1220,43 @@ export interface components {
          * @enum {string}
          */
         MealStatus: "pending" | "analyzing" | "needs_review" | "confirmed" | "failed";
+        /** @description Spend and tokens for one model. */
+        ModelUsage: {
+            /**
+             * Format: int64
+             * @description Output tokens.
+             */
+            completion_tokens: number;
+            /**
+             * Format: int64
+             * @description Estimated spend, micro-USD, at current rates.
+             */
+            cost_micro_usd: number;
+            /**
+             * Format: int64
+             * @description Input rate applied, micro-USD per million tokens.
+             */
+            input_rate_micro_usd: number;
+            /**
+             * Format: int64
+             * @description Analysis jobs run on it in the window.
+             */
+            jobs: number;
+            /** @description Model id exactly as recorded on the job. */
+            model: string;
+            /**
+             * Format: int64
+             * @description Output rate applied, micro-USD per million tokens.
+             */
+            output_rate_micro_usd: number;
+            /** @description Whether that rate was configured, compiled in, or a fallback guess. */
+            pricing_source: components["schemas"]["PricingSource"];
+            /**
+             * Format: int64
+             * @description Input tokens.
+             */
+            prompt_tokens: number;
+        };
         /**
          * @description Which input path supplied the dish name. Instrumented in M4 to answer
          *     PRD §14.2 — whether the zero-keyboard paths actually get used.
@@ -1241,6 +1318,19 @@ export interface components {
             portion_scale?: number | null;
             status?: null | components["schemas"]["MealStatus"];
         };
+        /**
+         * @description Where a rate came from — the difference between a figure worth trusting and
+         *     a placeholder.
+         *
+         *     Surfaced all the way to the usage screen on purpose. A cost derived from a
+         *     rate the operator supplied is a real number; one derived from
+         *     [`DEFAULT_PRICING`] is a guess that happens to have a dollar sign in front of
+         *     it. Rendering the two identically would repeat the mistake that made the
+         *     OpenAPI document lie about its own enum casing: authoritative-looking output
+         *     that nothing actually backs.
+         * @enum {string}
+         */
+        PricingSource: "configured" | "built_in" | "fallback";
         /** @description Body data and the targets derived from it. */
         ProfileResponse: {
             /**
@@ -1539,6 +1629,62 @@ export interface components {
              *     silently accepted (§6).
              */
             warnings: string[];
+        };
+        /** @description Body of `GET /api/v1/usage`. */
+        UsageResponse: {
+            /** @description Per-day series, oldest first. */
+            by_day: components["schemas"]["DailyUsage"][];
+            /** @description Per-model breakdown, most expensive first. */
+            by_model: components["schemas"]["ModelUsage"][];
+            /**
+             * Format: int64
+             * @description Output tokens.
+             */
+            completion_tokens: number;
+            /**
+             * Format: int64
+             * @description Estimated spend across the window, micro-USD, at current rates.
+             */
+            cost_micro_usd: number;
+            /**
+             * Format: int64
+             * @description Mean spend per analysed meal, micro-USD. Zero when nothing was analysed.
+             */
+            cost_per_meal_micro_usd: number;
+            /**
+             * Format: int64
+             * @description Jobs that failed terminally — spend that bought nothing.
+             */
+            failed_jobs: number;
+            /** @description Window start, echoed back. */
+            from: string;
+            /**
+             * @description True when any model in the window priced off the fallback, so the UI can
+             *     caveat the headline number instead of presenting a guess as a total.
+             */
+            has_estimated_pricing: boolean;
+            /**
+             * Format: int64
+             * @description Every analysis job in the window, whatever its outcome.
+             */
+            jobs: number;
+            /**
+             * Format: int64
+             * @description Distinct meals analysed. Lower than `jobs` when retries or corrections ran.
+             */
+            meals: number;
+            /**
+             * Format: int64
+             * @description Input tokens.
+             */
+            prompt_tokens: number;
+            /**
+             * Format: int64
+             * @description Jobs that were a retry of an earlier attempt (`parent_job_id` set).
+             */
+            retried_jobs: number;
+            /** @description Window end, echoed back. */
+            to: string;
         };
         /** @description The authenticated user's identity. */
         UserResponse: {
@@ -2395,6 +2541,40 @@ export interface operations {
             };
             /** @description No thumbnail for this meal */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_usage: {
+        parameters: {
+            query?: {
+                /** @description Inclusive local start date, `YYYY-MM-DD`. Defaults to 30 days back. */
+                from?: string | null;
+                /** @description Inclusive local end date, `YYYY-MM-DD`. Defaults to today. */
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Usage totals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageResponse"];
+                };
+            };
+            /** @description No session */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

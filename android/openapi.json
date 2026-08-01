@@ -1183,6 +1183,71 @@
         ]
       }
     },
+    "/api/v1/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Token and cost totals for the agent runs this user has caused",
+        "description": "Sums `analysis_jobs` for the caller. Cost is recomputed from token counts at the rates currently configured, never summed from the stored column, so correcting `PICWEIGHT_MODEL_PRICING` also corrects the history. Each model reports whether its rate was configured, compiled in, or a fallback guess.",
+        "operationId": "get_usage",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive local start date, `YYYY-MM-DD`. Defaults to 30 days back.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Inclusive local end date, `YYYY-MM-DD`. Defaults to today.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage totals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "No session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/weights": {
       "get": {
         "tags": [
@@ -1476,6 +1541,37 @@
             ],
             "format": "int32",
             "description": "Minutes east of UTC at capture."
+          }
+        }
+      },
+      "DailyUsage": {
+        "type": "object",
+        "description": "One day's totals, for the trend line.",
+        "required": [
+          "date",
+          "jobs",
+          "total_tokens",
+          "cost_micro_usd"
+        ],
+        "properties": {
+          "cost_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Estimated spend, micro-USD."
+          },
+          "date": {
+            "type": "string",
+            "description": "`YYYY-MM-DD`, bucketed by the job's creation instant in UTC."
+          },
+          "jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs that ran."
+          },
+          "total_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input + output tokens."
           }
         }
       },
@@ -2619,6 +2715,60 @@
           "failed"
         ]
       },
+      "ModelUsage": {
+        "type": "object",
+        "description": "Spend and tokens for one model.",
+        "required": [
+          "model",
+          "jobs",
+          "prompt_tokens",
+          "completion_tokens",
+          "cost_micro_usd",
+          "input_rate_micro_usd",
+          "output_rate_micro_usd",
+          "pricing_source"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Output tokens."
+          },
+          "cost_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Estimated spend, micro-USD, at current rates."
+          },
+          "input_rate_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input rate applied, micro-USD per million tokens."
+          },
+          "jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Analysis jobs run on it in the window."
+          },
+          "model": {
+            "type": "string",
+            "description": "Model id exactly as recorded on the job."
+          },
+          "output_rate_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Output rate applied, micro-USD per million tokens."
+          },
+          "pricing_source": {
+            "$ref": "#/components/schemas/PricingSource",
+            "description": "Whether that rate was configured, compiled in, or a fallback guess."
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input tokens."
+          }
+        }
+      },
       "NameSource": {
         "type": "string",
         "description": "Which input path supplied the dish name. Instrumented in M4 to answer\nPRD §14.2 — whether the zero-keyboard paths actually get used.",
@@ -2735,6 +2885,15 @@
             ]
           }
         }
+      },
+      "PricingSource": {
+        "type": "string",
+        "description": "Where a rate came from — the difference between a figure worth trusting and\na placeholder.\n\nSurfaced all the way to the usage screen on purpose. A cost derived from a\nrate the operator supplied is a real number; one derived from\n[`DEFAULT_PRICING`] is a guess that happens to have a dollar sign in front of\nit. Rendering the two identically would repeat the mistake that made the\nOpenAPI document lie about its own enum casing: authoritative-looking output\nthat nothing actually backs.",
+        "enum": [
+          "configured",
+          "built_in",
+          "fallback"
+        ]
       },
       "ProfileResponse": {
         "type": "object",
@@ -3234,6 +3393,93 @@
               "type": "string"
             },
             "description": "Non-fatal advice — e.g. an aggressive deficit. Warned about, not\nsilently accepted (§6)."
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "description": "Body of `GET /api/v1/usage`.",
+        "required": [
+          "from",
+          "to",
+          "jobs",
+          "failed_jobs",
+          "retried_jobs",
+          "meals",
+          "prompt_tokens",
+          "completion_tokens",
+          "cost_micro_usd",
+          "cost_per_meal_micro_usd",
+          "has_estimated_pricing",
+          "by_model",
+          "by_day"
+        ],
+        "properties": {
+          "by_day": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DailyUsage"
+            },
+            "description": "Per-day series, oldest first."
+          },
+          "by_model": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "description": "Per-model breakdown, most expensive first."
+          },
+          "completion_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Output tokens."
+          },
+          "cost_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Estimated spend across the window, micro-USD, at current rates."
+          },
+          "cost_per_meal_micro_usd": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Mean spend per analysed meal, micro-USD. Zero when nothing was analysed."
+          },
+          "failed_jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs that failed terminally — spend that bought nothing."
+          },
+          "from": {
+            "type": "string",
+            "description": "Window start, echoed back."
+          },
+          "has_estimated_pricing": {
+            "type": "boolean",
+            "description": "True when any model in the window priced off the fallback, so the UI can\ncaveat the headline number instead of presenting a guess as a total."
+          },
+          "jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every analysis job in the window, whatever its outcome."
+          },
+          "meals": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Distinct meals analysed. Lower than `jobs` when retries or corrections ran."
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Input tokens."
+          },
+          "retried_jobs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs that were a retry of an earlier attempt (`parent_job_id` set)."
+          },
+          "to": {
+            "type": "string",
+            "description": "Window end, echoed back."
           }
         }
       },

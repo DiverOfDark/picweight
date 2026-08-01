@@ -18,6 +18,7 @@ pub mod export;
 pub mod groups;
 pub mod meals;
 pub mod profile;
+pub mod usage;
 pub mod weights;
 
 use crate::AppState;
@@ -49,6 +50,7 @@ a server-side estimation agent returns calories and macros.",
         crate::auth::auth_config,
         // Profile & targets
         profile::get_me,
+        usage::get_usage,
         profile::update_profile,
         // Meals
         meals::create_meal,
@@ -80,6 +82,10 @@ a server-side estimation agent returns calories and macros.",
         healthz,
     ),
     components(schemas(
+        usage::UsageResponse,
+        usage::ModelUsage,
+        usage::DailyUsage,
+        crate::jobs::analyzer::PricingSource,
         crate::error::ErrorBody,
         // Auth
         crate::auth::SessionClaims,
@@ -221,6 +227,7 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         // Profile & targets
         .route("/api/v1/me", get(profile::get_me))
+        .route("/api/v1/usage", get(usage::get_usage))
         .route("/api/v1/me/profile", put(profile::update_profile))
         // Zero-keyboard inputs
         .route("/api/v1/dishes/recent", get(dishes::recent_dishes))

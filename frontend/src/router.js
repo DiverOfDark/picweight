@@ -6,6 +6,7 @@ import LoginPage from '@/views/LoginPage.vue'
 import MealDetail from '@/views/MealDetail.vue'
 import ProfileView from '@/views/ProfileView.vue'
 import TodayView from '@/views/TodayView.vue'
+import UsageView from '@/views/UsageView.vue'
 import TrendsView from '@/views/TrendsView.vue'
 
 const routes = [
@@ -45,6 +46,12 @@ const routes = [
     name: 'trends',
     component: TrendsView,
     meta: { view: 'trends' },
+  },
+  {
+    path: '/usage',
+    name: 'usage',
+    component: UsageView,
+    meta: { view: 'usage' },
   },
   {
     path: '/profile',
