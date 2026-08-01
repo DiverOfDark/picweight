@@ -96,7 +96,7 @@ naming it.
 | `PICWEIGHT_JWT_SECRET` | auto-generated | Persisted to `<data_path>/.picweight_jwt_secret` |
 | `PICWEIGHT_JWT_TTL` | `1209600` | Session lifetime, seconds |
 | `PICWEIGHT_OPENAI_API_KEY` | **required** | Lives only in the backend |
-| `PICWEIGHT_OPENAI_MODEL` | `gpt-4.1` | |
+| `PICWEIGHT_OPENAI_MODEL` | `gpt-5.4-mini` | |
 | `PICWEIGHT_OPENAI_BASE_URL` | `https://api.openai.com/v1` | LiteLLM / vLLM / Azure / test mock |
 | `PICWEIGHT_WEB_SEARCH_ENABLED` | `false` | Registers the agent's `web_search` tool |
 | `RUST_LOG` / `PICWEIGHT_RUST_LOG` | `info` | |

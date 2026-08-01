@@ -161,7 +161,7 @@ fails loudly: the meal goes to `failed` with a visible reason.
 | Variable | Default | Description |
 |---|---|---|
 | `PICWEIGHT_OPENAI_API_KEY` | *(required)* | Running without a key is an explicit non-goal |
-| `PICWEIGHT_OPENAI_MODEL` | `gpt-4.1` | Vision model handed to rig |
+| `PICWEIGHT_OPENAI_MODEL` | `gpt-5.4-mini` | Vision model handed to rig |
 | `PICWEIGHT_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Point at LiteLLM / vLLM / Azure, or a mock in tests |
 | `PICWEIGHT_WEB_SEARCH_ENABLED` | `false` | Registers the agent's `web_search` tool (chain-restaurant nutrition) |
 

@@ -21,7 +21,7 @@
 //! | `PICWEIGHT_JWT_SECRET` | no | generated once into `<data_path>/.picweight_jwt_secret` |
 //! | `PICWEIGHT_JWT_TTL` | no | `1209600` (14 days) |
 //! | `PICWEIGHT_OPENAI_API_KEY` | **yes** | — (PRD §4: working without a key is a non-goal) |
-//! | `PICWEIGHT_OPENAI_MODEL` | no | `gpt-4.1` |
+//! | `PICWEIGHT_OPENAI_MODEL` | no | `gpt-5.4-mini` |
 //! | `PICWEIGHT_OPENAI_BASE_URL` | no | `https://api.openai.com/v1` |
 //! | `PICWEIGHT_RUST_LOG` / `RUST_LOG` | no | `info` |
 //! | `PICWEIGHT_WEB_SEARCH_ENABLED` | no | `false` (§5: config-gated, off by default) |
@@ -33,7 +33,15 @@ pub const DEFAULT_PORT: u16 = 33100;
 /// Default session lifetime: 14 days, matching phos.
 pub const DEFAULT_JWT_TTL_SECS: u64 = 1_209_600;
 /// Default vision model. Overridable so a model swap needs no rebuild.
-pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4.1";
+///
+/// Must accept image input, tool calls and strict structured output — the
+/// estimation agent (PRD §5) uses all three, and a model missing any of them
+/// fails at the first photo rather than at startup.
+///
+/// Kept in step with `helm/picweight/values.yaml`'s `openai.model`, which sets
+/// the env var explicitly on every deployment. This constant only governs a bare
+/// `cargo run` with no `PICWEIGHT_OPENAI_MODEL` set.
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5.4-mini";
 /// Default OpenAI API root, with no trailing slash.
 ///
 /// Overridable for three reasons, in increasing order of how often they bite:
