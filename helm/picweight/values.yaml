@@ -94,7 +94,9 @@ openai:
   # SealedSecret example below produces.
   existingSecret: ""
   apiKeyKey: api_key
-  model: "gpt-4.1"
+  # The vision model the estimation agent runs on (PRD §5). It must accept image
+  # input, tool calls and strict structured output — the agent uses all three.
+  model: "gpt-5.4-mini"
   # Override for an OpenAI-compatible proxy (LiteLLM, vLLM, Azure).
   baseUrl: ""
 
