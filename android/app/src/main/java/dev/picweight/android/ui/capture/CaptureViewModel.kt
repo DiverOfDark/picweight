@@ -8,10 +8,12 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.local.RecentDishEntity
 import dev.picweight.android.data.remote.model.NameSource
+import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.di.ApplicationScope
 import dev.picweight.android.ui.common.ApiFailures
 import dev.picweight.android.ui.common.FailureKind
+import dev.picweight.android.ui.common.MealImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,9 +55,13 @@ data class CaptureUiState(
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
     private val meals: MealRepository,
+    private val authRepository: AuthRepository,
     @param:ApplicationScope private val appScope: CoroutineScope,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+
+    /** See [MealImage]: the local file while it exists, the server's thumbnail after. */
+    fun thumbnailModel(meal: MealEntity): Any? = MealImage.model(meal, authRepository::absoluteUrl)
 
     private val sittingId: String = meals.newSitting()
 

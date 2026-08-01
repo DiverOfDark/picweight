@@ -205,6 +205,11 @@ dependencies {
     ksp(libs.hilt.compiler)
     implementation(libs.hilt.navigation.compose)
     implementation(libs.hilt.work)
+    // MUST accompany hilt.work. `ksp(libs.hilt.compiler)` above is Dagger's compiler and
+    // knows nothing about @HiltWorker; this one generates the *_AssistedFactory and
+    // *_HiltModule that populate HiltWorkerFactory's map. Drop it and every worker
+    // becomes uninstantiable at runtime with no compile-time complaint whatsoever.
+    ksp(libs.androidx.hilt.compiler)
 
     // Generated code annotations
     compileOnly("javax.annotation:javax.annotation-api:1.3.2")

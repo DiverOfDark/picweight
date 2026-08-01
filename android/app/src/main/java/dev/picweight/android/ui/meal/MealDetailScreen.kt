@@ -52,6 +52,7 @@ import dev.picweight.android.data.local.LocalMealStatus
 import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.local.MealItemEntity
 import dev.picweight.android.ui.common.ErrorBanner
+import dev.picweight.android.ui.common.MealStatusCopy
 import dev.picweight.android.ui.common.asWhole
 import kotlin.math.roundToInt
 
@@ -98,10 +99,10 @@ fun MealDetailScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            viewModel.thumbnailUrl(meal)?.let { url ->
+            viewModel.thumbnailModel(meal)?.let { image ->
                 item {
                     AsyncImage(
-                        model = url,
+                        model = image,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -112,7 +113,7 @@ fun MealDetailScreen(
                 }
             }
 
-            item { StatusHeader(meal) }
+            item { StatusHeader(meal, state.online) }
 
             state.error?.let { item { Box(Modifier.padding(16.dp)) { ErrorBanner(it) } } }
             state.message?.let {
@@ -221,7 +222,7 @@ fun MealDetailScreen(
 }
 
 @Composable
-private fun StatusHeader(meal: MealEntity) {
+private fun StatusHeader(meal: MealEntity, online: Boolean) {
     Column(Modifier.padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -235,15 +236,7 @@ private fun StatusHeader(meal: MealEntity) {
                 Spacer(Modifier.width(8.dp))
             }
             Text(
-                text = when (meal.status) {
-                    LocalMealStatus.HELD -> "saving"
-                    LocalMealStatus.QUEUED -> "waiting for a connection"
-                    LocalMealStatus.PENDING -> "queued for analysis"
-                    LocalMealStatus.ANALYZING -> "analysing"
-                    LocalMealStatus.NEEDS_REVIEW -> "needs review"
-                    LocalMealStatus.CONFIRMED -> "confirmed"
-                    LocalMealStatus.FAILED -> "failed"
-                },
+                text = MealStatusCopy.badge(meal.status, online),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

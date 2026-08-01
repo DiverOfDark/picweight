@@ -73,6 +73,15 @@ interface MealDao {
     @Query("UPDATE meals SET status = 'FAILED', error = :reason, updatedAt = :now WHERE clientUuid = :clientUuid")
     suspend fun markFailed(clientUuid: String, reason: String, now: Long)
 
+    /**
+     * Records why an upload bounced *without* declaring the meal dead.
+     *
+     * The row stays QUEUED — WorkManager will try again, and G5 says a logged meal is
+     * never dropped — but it stops pretending the only thing wrong is the network.
+     */
+    @Query("UPDATE meals SET error = :reason, updatedAt = :now WHERE clientUuid = :clientUuid")
+    suspend fun noteUploadError(clientUuid: String, reason: String, now: Long)
+
     @Query("UPDATE meals SET notified = 1, updatedAt = :now WHERE clientUuid = :clientUuid")
     suspend fun markNotified(clientUuid: String, now: Long)
 

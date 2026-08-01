@@ -29,7 +29,7 @@ class MealUploadWorker @AssistedInject constructor(
         val clientUuid = inputData.getString(SyncScheduler.KEY_CLIENT_UUID)
             ?: return Result.failure()
 
-        return when (meals.uploadOne(clientUuid)) {
+        return when (meals.uploadOne(clientUuid, runAttemptCount)) {
             UploadOutcome.DONE -> Result.success()
             UploadOutcome.RETRY -> {
                 Log.i(TAG, "Retrying upload of $clientUuid (attempt ${runAttemptCount + 1})")

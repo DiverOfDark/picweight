@@ -3,6 +3,7 @@ package dev.picweight.android.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.picweight.android.data.ConnectivityMonitor
 import dev.picweight.android.data.local.DayStateEntity
 import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.repository.AuthRepository
@@ -11,6 +12,7 @@ import dev.picweight.android.data.repository.ProfileRepository
 import dev.picweight.android.ui.common.ApiFailure
 import dev.picweight.android.ui.common.ApiFailures
 import dev.picweight.android.ui.common.FailureKind
+import dev.picweight.android.ui.common.MealImage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -69,6 +71,12 @@ data class HomeUiState(
     val authExpired: Boolean = false,
     val refreshing: Boolean = false,
     val error: String? = null,
+    /**
+     * Whether the phone has a usable route out. Drives whether a queued meal is allowed
+     * to claim it is "waiting for a connection"; assumed true until told otherwise, so
+     * an unknown answer never produces that claim.
+     */
+    val online: Boolean = true,
 )
 
 @HiltViewModel
@@ -76,6 +84,7 @@ class HomeViewModel @Inject constructor(
     private val meals: MealRepository,
     private val profile: ProfileRepository,
     private val authRepository: AuthRepository,
+    connectivity: ConnectivityMonitor,
 ) : ViewModel() {
 
     private val today = LocalDate.now()
@@ -87,8 +96,8 @@ class HomeViewModel @Inject constructor(
         meals.flowForLocalDay(today),
         profile.me,
         authRepository.authExpired,
-        combine(refreshing, error) { r, e -> r to e },
-    ) { day, dayMeals, me, expired, (isRefreshing, err) ->
+        combine(refreshing, error, connectivity.online) { r, e, on -> Triple(r, e, on) },
+    ) { day, dayMeals, me, expired, (isRefreshing, err, isOnline) ->
         HomeUiState(
             day = day,
             rows = collapse(dayMeals),
@@ -97,6 +106,7 @@ class HomeViewModel @Inject constructor(
             authExpired = expired,
             refreshing = isRefreshing,
             error = err,
+            online = isOnline,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeUiState())
 
@@ -128,7 +138,11 @@ class HomeViewModel @Inject constructor(
         }
     }
 
-    fun thumbnailUrl(meal: MealEntity): String? = authRepository.absoluteUrl(meal.thumbnailUrl)
+    /**
+     * What to render for this meal — the local capture while it is still the only copy,
+     * the server's thumbnail once there is one. See [MealImage].
+     */
+    fun thumbnailModel(meal: MealEntity): Any? = MealImage.model(meal, authRepository::absoluteUrl)
 
     private fun collapse(dayMeals: List<MealEntity>): List<DayRow> {
         val (grouped, solo) = dayMeals.partition { it.groupId != null }

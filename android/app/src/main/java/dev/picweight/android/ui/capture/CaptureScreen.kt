@@ -68,7 +68,6 @@ import coil3.compose.AsyncImage
 import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.asWhole
-import java.io.File
 import java.util.concurrent.Executors
 
 /**
@@ -231,6 +230,7 @@ fun CaptureScreen(
             onManual = viewModel::logWithoutPhoto,
             onFinish = viewModel::finish,
             onShotClick = onMealClick,
+            thumbnailModel = viewModel::thumbnailModel,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
@@ -250,6 +250,7 @@ private fun CapturePanel(
     onManual: () -> Unit,
     onFinish: () -> Unit,
     onShotClick: (String) -> Unit,
+    thumbnailModel: (MealEntity) -> Any?,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -277,7 +278,9 @@ private fun CapturePanel(
                     contentPadding = PaddingValues(vertical = 4.dp),
                 ) {
                     items(state.shots, key = { it.clientUuid }) { shot ->
-                        ShotThumbnail(shot) { onShotClick(shot.clientUuid) }
+                        ShotThumbnail(shot, thumbnailModel(shot)) {
+                            onShotClick(shot.clientUuid)
+                        }
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -393,7 +396,7 @@ private fun CapturePanel(
 }
 
 @Composable
-private fun ShotThumbnail(shot: MealEntity, onClick: () -> Unit) {
+private fun ShotThumbnail(shot: MealEntity, model: Any?, onClick: () -> Unit) {
     Box(
         Modifier
             .size(64.dp)
@@ -402,12 +405,12 @@ private fun ShotThumbnail(shot: MealEntity, onClick: () -> Unit) {
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        // The local file is gone the moment the upload lands; fall back to the server's
-        // thumbnail is not needed here because the strip only shows the live sitting.
-        val local = shot.photoPath?.let(::File)?.takeIf { it.isFile }
-        if (local != null) {
+        // Local capture first, server thumbnail once the local file has been handed
+        // over. The strip normally shows the live sitting, where the local file is still
+        // present — but a shot that has already been analysed must not blank out.
+        if (model != null) {
             AsyncImage(
-                model = local,
+                model = model,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

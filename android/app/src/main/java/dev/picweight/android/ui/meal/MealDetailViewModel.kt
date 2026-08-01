@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dev.picweight.android.data.ConnectivityMonitor
 import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.local.MealItemEntity
 import dev.picweight.android.data.remote.model.PatchMealItem
@@ -11,6 +12,7 @@ import dev.picweight.android.data.remote.model.RevisionEntry
 import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.ui.common.ApiFailures
+import dev.picweight.android.ui.common.MealImage
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -37,6 +39,8 @@ data class MealDetailUiState(
     val error: String? = null,
     val message: String? = null,
     val deleted: Boolean = false,
+    /** See `HomeUiState.online`: gates the "waiting for a connection" badge. */
+    val online: Boolean = true,
 )
 
 /**
@@ -52,6 +56,7 @@ data class MealDetailUiState(
 class MealDetailViewModel @Inject constructor(
     private val meals: MealRepository,
     private val authRepository: AuthRepository,
+    connectivity: ConnectivityMonitor,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
@@ -83,8 +88,8 @@ class MealDetailViewModel @Inject constructor(
         itemsFlow,
         combine(feedback, showRevisions, revisions) { f, s, r -> Triple(f, s, r) },
         combine(busy, error, message) { b, e, m -> Triple(b, e, m) },
-        deleted,
-    ) { meal, items, (feedbackText, revisionsOpen, revisionList), (isBusy, err, msg), isDeleted ->
+        combine(deleted, connectivity.online) { d, on -> d to on },
+    ) { meal, items, (feedbackText, revisionsOpen, revisionList), (isBusy, err, msg), (isDeleted, isOnline) ->
         MealDetailUiState(
             meal = meal,
             items = items,
@@ -95,6 +100,7 @@ class MealDetailViewModel @Inject constructor(
             error = err,
             message = msg,
             deleted = isDeleted,
+            online = isOnline,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MealDetailUiState())
 
@@ -115,7 +121,11 @@ class MealDetailViewModel @Inject constructor(
         }
     }
 
-    fun thumbnailUrl(meal: MealEntity): String? = authRepository.absoluteUrl(meal.thumbnailUrl)
+    /**
+     * The local capture until the server has a thumbnail of its own. Without the local
+     * leg, a meal that has not finished uploading shows no image here at all.
+     */
+    fun thumbnailModel(meal: MealEntity): Any? = MealImage.model(meal, authRepository::absoluteUrl)
 
     fun setFeedback(value: String) {
         feedback.value = value

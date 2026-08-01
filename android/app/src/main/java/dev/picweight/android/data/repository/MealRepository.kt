@@ -81,6 +81,12 @@ class MealRepository @Inject constructor(
          */
         const val HOLD_GRACE_MS = 2 * 60 * 1000L
 
+        /**
+         * How many bounced attempts before the row stops saying "waiting" and starts
+         * naming the reason. One transient failure is normal; two is a symptom.
+         */
+        const val NOISY_AFTER_ATTEMPTS = 2
+
         private val RFC3339: DateTimeFormatter = DateTimeFormatter.ISO_OFFSET_DATE_TIME
         private val TEXT = "text/plain; charset=utf-8".toMediaType()
         private val JPEG = "image/jpeg".toMediaType()
@@ -180,22 +186,65 @@ class MealRepository @Inject constructor(
             updatedAt = System.currentTimeMillis(),
         )
         dao.upsert(released)
-        scheduler.enqueueUpload(released.clientUuid)
+        enqueueUpload(released.clientUuid)
+    }
+
+    /**
+     * Hands one meal to WorkManager, loudly.
+     *
+     * The row is written QUEUED *before* this runs, and every caller wraps the release in
+     * `runCatching`, so a throw from `enqueueUpload` used to strand a meal at QUEUED —
+     * "Waiting for a connection" forever — leaving no trace anywhere. If the queue cannot
+     * accept work, that is the single most important fact about this app's state.
+     */
+    private fun enqueueUpload(clientUuid: String) {
+        runCatching { scheduler.enqueueUpload(clientUuid) }
+            .onFailure { Log.e(TAG, "Could not enqueue the upload of $clientUuid", it) }
     }
 
     /** Re-enqueues everything the queue still owes the server. */
     suspend fun resumeQueue() {
         releaseStaleHolds()
+        // Per-item isolation: one meal that cannot be enqueued must not abort the loop
+        // and silently strand every meal behind it — nor skip the event stream below.
         dao.awaitingUpload()
             .filter { it.status == LocalMealStatus.QUEUED }
-            .forEach { scheduler.enqueueUpload(it.clientUuid) }
-        if (dao.awaitingAnalysis().isNotEmpty()) scheduler.enqueueEventStream()
+            .forEach { enqueueUpload(it.clientUuid) }
+        if (dao.awaitingAnalysis().isNotEmpty()) {
+            runCatching { scheduler.enqueueEventStream() }
+                .onFailure { Log.e(TAG, "Could not start the meal event stream", it) }
+        }
     }
 
     // ---- upload -----------------------------------------------------------
 
-    /** Uploads one queued meal. Safe to call repeatedly: `client_uuid` dedupes. */
-    suspend fun uploadOne(clientUuid: String): UploadOutcome {
+    /**
+     * Uploads one queued meal. Safe to call repeatedly: `client_uuid` dedupes.
+     *
+     * [attempt] is WorkManager's `runAttemptCount` (0 on the first run). It exists so a
+     * retry that will never succeed stops looking like one that is merely waiting for a
+     * signal: from the second attempt on, the row carries the actual reason.
+     *
+     * Nothing thrown escapes. An upload that dies on something other than I/O is a bug,
+     * and a bug in a worker that surfaces as "waiting for a connection" is a bug you
+     * find in a week rather than in a minute — so it is logged at [Log.e] and written
+     * onto the row where the user (and logcat) can see it.
+     */
+    suspend fun uploadOne(clientUuid: String, attempt: Int = 0): UploadOutcome = try {
+        upload(clientUuid, attempt)
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        // The worker was stopped, not broken. Never swallow this: it would break
+        // structured concurrency and make a cancelled upload look like a failed one.
+        throw e
+    } catch (t: Throwable) {
+        Log.e(TAG, "Upload of $clientUuid crashed on attempt ${attempt + 1}", t)
+        runCatching {
+            dao.markFailed(clientUuid, crashReason(t), System.currentTimeMillis())
+        }.onFailure { Log.e(TAG, "Could not even record the crash for $clientUuid", it) }
+        UploadOutcome.GIVE_UP
+    }
+
+    private suspend fun upload(clientUuid: String, attempt: Int): UploadOutcome {
         val meal = dao.byClientUuid(clientUuid) ?: return UploadOutcome.DONE
         if (meal.status.isUploaded) return UploadOutcome.DONE
         if (meal.status == LocalMealStatus.HELD) return UploadOutcome.RETRY
@@ -240,17 +289,25 @@ class MealRepository @Inject constructor(
                             serverId = body.mealId,
                             status = LocalMealStatus.fromWire(body.status.value),
                             revision = body.revision,
-                            photoPath = null,
+                            // The photo deliberately survives the upload. `202 Accepted`
+                            // carries no `thumbnail_url` — that only arrives with a later
+                            // MealResponse — so deleting the file here opens a window,
+                            // the whole length of the analysis, in which the meal has
+                            // neither a local image nor a server one and renders as a
+                            // grey placeholder. [applyServerMeal] drops it once the
+                            // server's thumbnail actually exists.
                             error = null,
                             updatedAt = now,
                         )
                     )
-                    file?.delete()
                     scheduler.enqueueEventStream()
                     UploadOutcome.DONE
                 }
 
-                response.code() in RETRYABLE_CODES -> UploadOutcome.RETRY
+                response.code() in RETRYABLE_CODES -> {
+                    noteRetry(clientUuid, attempt, "the server returned HTTP ${response.code()}")
+                    UploadOutcome.RETRY
+                }
 
                 else -> {
                     dao.markFailed(
@@ -262,16 +319,47 @@ class MealRepository @Inject constructor(
                 }
             }
         } catch (e: IOException) {
-            Log.i(TAG, "Upload of $clientUuid deferred: ${e.message}")
+            noteRetry(clientUuid, attempt, ioReason(e))
             UploadOutcome.RETRY
         } catch (e: HttpException) {
             if (e.code() in RETRYABLE_CODES) {
+                noteRetry(clientUuid, attempt, "the server returned HTTP ${e.code()}")
                 UploadOutcome.RETRY
             } else {
                 dao.markFailed(clientUuid, describe(e.code(), e.message()), System.currentTimeMillis())
                 UploadOutcome.GIVE_UP
             }
         }
+    }
+
+    /**
+     * Records a bounced attempt on the row and in logcat.
+     *
+     * The row stays QUEUED so WorkManager keeps retrying — a meal is never dropped (G5)
+     * — but from the second attempt onward it stops claiming to be waiting for a
+     * connection and names what actually happened. The first bounce stays quiet at
+     * [Log.i]: one lost request while walking into a lift is not an event.
+     */
+    private suspend fun noteRetry(clientUuid: String, attempt: Int, reason: String) {
+        val attempts = attempt + 1
+        if (attempts < NOISY_AFTER_ATTEMPTS) {
+            Log.i(TAG, "Upload of $clientUuid deferred: $reason")
+            return
+        }
+        val note = "Upload failed $attempts times: $reason"
+        Log.w(TAG, "Upload of $clientUuid: $note")
+        runCatching { dao.noteUploadError(clientUuid, note, System.currentTimeMillis()) }
+            .onFailure { Log.e(TAG, "Could not record the upload failure for $clientUuid", it) }
+    }
+
+    /** Names an I/O failure in words a user can act on. */
+    private fun ioReason(e: IOException): String =
+        e.message?.takeIf { it.isNotBlank() }?.let { "${e.javaClass.simpleName}: $it" }
+            ?: e.javaClass.simpleName
+
+    private fun crashReason(t: Throwable): String {
+        val detail = t.message?.takeIf { it.isNotBlank() }?.let { ": $it" }.orEmpty()
+        return "Upload failed unexpectedly (${t.javaClass.simpleName}$detail)"
     }
 
     private fun describe(code: Int, rawBody: String?): String {
@@ -333,6 +421,14 @@ class MealRepository @Inject constructor(
     suspend fun applyServerMeal(remote: MealResponse) {
         val existing = dao.byClientUuid(remote.clientUuid)
         val totals = remote.totals
+        // Hand the thumbnail over rather than dropping it: the local file is released
+        // only once the server has one to show in its place, so the row never goes
+        // imageless in between.
+        val serverHasThumbnail = !remote.thumbnailUrl.isNullOrBlank()
+        val keptPhotoPath = if (serverHasThumbnail) null else existing?.photoPath
+        if (serverHasThumbnail) {
+            existing?.photoPath?.let { runCatching { File(it).delete() } }
+        }
         val entity = MealEntity(
             clientUuid = remote.clientUuid,
             serverId = remote.id,
@@ -345,7 +441,7 @@ class MealRepository @Inject constructor(
             mealType = remote.mealType,
             eatenAt = remote.eatenAt.toInstant().toEpochMilli(),
             timezoneOffset = remote.timezoneOffset,
-            photoPath = existing?.photoPath,
+            photoPath = keptPhotoPath,
             thumbnailUrl = remote.thumbnailUrl,
             status = LocalMealStatus.fromWire(remote.status.value),
             revision = remote.revision,

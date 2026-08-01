@@ -4,6 +4,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import dev.picweight.android.data.remote.model.MealStatus
 
 /**
  * Where a meal is in its life, from the phone's point of view.
@@ -43,13 +44,23 @@ enum class LocalMealStatus {
         get() = this != HELD && this != QUEUED
 
     companion object {
-        /** Maps a wire [dev.picweight.android.data.remote.model.MealStatus] value. */
+        /**
+         * Maps a wire [MealStatus] value.
+         *
+         * Written against [MealStatus]'s own constants rather than string literals on
+         * purpose: the wire values are generated from `openapi.json` (lowercase
+         * snake_case — `needs_review`), and a hand-written `"NeedsReview"` compiled
+         * perfectly while matching nothing, so every server status silently fell through
+         * to [PENDING]. That is invisible at compile time and looks like a stuck meal at
+         * runtime. Referencing the generated enum makes the compiler the thing that
+         * notices when the contract moves.
+         */
         fun fromWire(value: String?): LocalMealStatus = when (value) {
-            "Pending" -> PENDING
-            "Analyzing" -> ANALYZING
-            "NeedsReview" -> NEEDS_REVIEW
-            "Confirmed" -> CONFIRMED
-            "Failed" -> FAILED
+            MealStatus.PENDING.value -> PENDING
+            MealStatus.ANALYZING.value -> ANALYZING
+            MealStatus.NEEDS_REVIEW.value -> NEEDS_REVIEW
+            MealStatus.CONFIRMED.value -> CONFIRMED
+            MealStatus.FAILED.value -> FAILED
             else -> PENDING
         }
     }
@@ -123,7 +134,14 @@ data class MealEntity(
     val fatG: Double = 0.0,
     val carbsG: Double = 0.0,
 
-    /** Failure reason when [status] is [LocalMealStatus.FAILED] — never silent. */
+    /**
+     * Why this meal is unhappy — never silent.
+     *
+     * Set when [status] is [LocalMealStatus.FAILED], and *also* while a meal is still
+     * [LocalMealStatus.QUEUED] and its upload keeps bouncing. A queued row whose upload
+     * has failed six times is not "waiting for a connection", and saying so is the
+     * difference between a diagnosable bug and one that hides for a week.
+     */
     val error: String? = null,
 
     /** Guards against notifying twice for the same meal across worker restarts. */

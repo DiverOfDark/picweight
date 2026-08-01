@@ -46,6 +46,7 @@ import dev.picweight.android.ui.common.CalorieRing
 import dev.picweight.android.ui.common.ErrorBanner
 import dev.picweight.android.ui.common.MacroBar
 import dev.picweight.android.ui.common.MacroColors
+import dev.picweight.android.ui.common.MealStatusCopy
 import dev.picweight.android.ui.common.asWhole
 import dev.picweight.android.ui.update.UpdateBanner
 import java.time.Instant
@@ -182,13 +183,15 @@ fun HomeScreen(
                 when (row) {
                     is DayRow.Single -> MealRow(
                         meal = row.meal,
-                        thumbnailUrl = viewModel.thumbnailUrl(row.meal),
+                        thumbnailModel = viewModel.thumbnailModel(row.meal),
+                        online = state.online,
                         onClick = { onMealClick(row.meal.clientUuid) },
                     )
 
                     is DayRow.Sitting -> SittingRow(
                         row = row,
-                        thumbnailUrl = { viewModel.thumbnailUrl(it) },
+                        thumbnailModel = { viewModel.thumbnailModel(it) },
+                        online = state.online,
                         onMealClick = onMealClick,
                     )
                 }
@@ -224,7 +227,8 @@ private fun OnboardingPrompt(onProfile: () -> Unit) {
 @Composable
 private fun MealRow(
     meal: MealEntity,
-    thumbnailUrl: String?,
+    thumbnailModel: Any?,
+    online: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -242,9 +246,9 @@ private fun MealRow(
                 .background(MaterialTheme.colorScheme.surfaceVariant),
             contentAlignment = Alignment.Center,
         ) {
-            if (thumbnailUrl != null) {
+            if (thumbnailModel != null) {
                 AsyncImage(
-                    model = thumbnailUrl,
+                    model = thumbnailModel,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
@@ -262,20 +266,21 @@ private fun MealRow(
 
         Column(Modifier.weight(1f)) {
             Text(
-                text = meal.dishName ?: statusLabel(meal.status),
+                text = meal.dishName ?: MealStatusCopy.title(meal, online),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
             )
             val subtitle = when {
-                meal.status == LocalMealStatus.FAILED -> meal.error ?: "Analysis failed"
-                meal.status.isInFlight -> statusLabel(meal.status)
+                meal.status == LocalMealStatus.FAILED || meal.status.isInFlight ->
+                    MealStatusCopy.detail(meal, online)
+
                 else -> "${localTime(meal)} · ${meal.proteinG.asWhole()}P " +
                     "${meal.fatG.asWhole()}F ${meal.carbsG.asWhole()}C"
             }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (meal.status == LocalMealStatus.FAILED) MaterialTheme.colorScheme.error
+                color = if (MealStatusCopy.isProblem(meal)) MaterialTheme.colorScheme.error
                 else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -292,7 +297,8 @@ private fun MealRow(
 @Composable
 private fun SittingRow(
     row: DayRow.Sitting,
-    thumbnailUrl: (MealEntity) -> String?,
+    thumbnailModel: (MealEntity) -> Any?,
+    online: Boolean,
     onMealClick: (String) -> Unit,
 ) {
     Column(Modifier.padding(vertical = 4.dp)) {
@@ -327,22 +333,13 @@ private fun SittingRow(
             Row(Modifier.padding(start = 16.dp)) {
                 MealRow(
                     meal = meal,
-                    thumbnailUrl = thumbnailUrl(meal),
+                    thumbnailModel = thumbnailModel(meal),
+                    online = online,
                     onClick = { onMealClick(meal.clientUuid) },
                 )
             }
         }
     }
-}
-
-private fun statusLabel(status: LocalMealStatus): String = when (status) {
-    LocalMealStatus.HELD -> "Saving…"
-    LocalMealStatus.QUEUED -> "Waiting for a connection"
-    LocalMealStatus.PENDING -> "Queued for analysis"
-    LocalMealStatus.ANALYZING -> "Analysing…"
-    LocalMealStatus.NEEDS_REVIEW -> "Needs review"
-    LocalMealStatus.CONFIRMED -> "Confirmed"
-    LocalMealStatus.FAILED -> "Failed"
 }
 
 private fun localTime(meal: MealEntity): String =
