@@ -77,7 +77,8 @@ The free-text comment stays — highest signal *when present* — but it's a bon
 | G1 | Log a meal in ≤10s of user attention | Median capture→confirmed under 10s |
 | G2 | Defensible numbers for delivery food **without** user commentary | <30% median kcal error on known-weight test meals, no comment supplied |
 | G3 | Repeat orders become near-exact | Second occurrence of a confirmed dish within a few % of corrected numbers |
-| G4 | A wrong estimate is fixable in one message | Re-analysis with feedback produces corrected values without manual per-item editing |
+| G4 | A wrong estimate is fixable in one message | Re-analysis resumes the agent session and produces corrected values without repeat tool calls |
+| G4b | A multi-dish sitting is one notification | N photos → N concurrent loops → one grouped notification |
 | G5 | Never lose a logged meal | Zero drops across airplane-mode testing |
 | G6 | Targets derived from body data | Computed at onboarding, recomputed on weight change |
 | G7 | Immediate actionable feedback per meal | Self-contained notification on analysis completion |
@@ -153,25 +154,24 @@ Why continuation rather than a fresh call with a summary:
 
 Manual per-item editing stays for small tweaks: gram sliders with snap points, add/remove items in two taps, and `portion_scale` for "ate 60% of it". Every correction, typed or dragged, is stored in `item_corrections`.
 
-### Batch capture — one meal, many photos
+### Multi-dish sittings — one loop per photo, grouped by `group_id`
 
-Ordering from a restaurant menu produces several dishes at once. Photographing them one at a time would mean N meals, N analyses and **N notifications** for what is one sitting.
+Ordering from a restaurant menu produces several dishes at once. Photographing them one at a time would otherwise mean N separate notifications for what is one sitting.
 
-Flow: the capture screen has an **"add another"** affordance. Shoot as many photos as the meal needs, see them in a thumbnail strip, tap **Done**. The result is **one meal, one analysis pass over all images, one notification.**
+**Each photo gets its own independent agentic loop.** There is no multi-image analysis, no batch protocol, no draft state and no extra endpoints. The capture screen's "add another" affordance simply enqueues more uploads; the client generates a **`group_id`** at the start of a sitting and stamps it on every photo in that sitting. Grouping is a display and notification concern, not an analysis one — internally it's just a queue of ordinary single-photo jobs.
 
-Protocol — deliberately three calls rather than one multi-file upload, because the offline queue (§M6) needs each photo independently retryable on a flaky connection:
+Why one loop per photo is the better design, not merely the simpler one:
+- **Latency is one loop, not N.** The jobs run concurrently, so a five-dish sitting completes in roughly the time of a single dish. A batched multi-image call would be one long serial reasoning pass over five dishes.
+- **Each dish becomes independently recallable.** "Шаурма" enters the recall corpus as its own dish rather than buried inside a five-dish sitting. This directly strengthens the flywheel, which is the primary accuracy mechanism (§1).
+- **Corrections stay surgical.** Fixing the rice portion resumes *that dish's* session (§5) without touching the other four.
+- **Failures isolate.** One timed-out analysis doesn't sink the sitting; four dishes still land.
+- **One code path.** A solo meal is just a group of one — and unlike the batch protocol, that isn't a special case to maintain, it's the only case.
 
-```
-POST /api/v1/meals              → { client_uuid, ... }  creates meal in `draft`
-POST /api/v1/meals/:id/photos   → one photo + photo_uuid (per-photo idempotency key)
-POST /api/v1/meals/:id/complete → transitions to `pending`, enqueues ONE job
-```
+*Accepted cost:* N× the tokens of a single multi-image call, which is a non-issue given the provider-side key limit (§3). And the loops can't see each other, so a shared side dish photographed twice from different angles will be counted twice — the day view's group collapse makes that visible, and deleting the duplicate is two taps.
 
-A single N-file upload would be all-or-nothing: one dropped connection and the whole sitting has to be reshot. Per-photo requests let WorkManager retry exactly the photo that failed.
+**Notification grouping.** One notification per group, not per photo. The group settles when it has no in-flight jobs and no new photo has arrived for a short debounce window (default 90s). Optional `group_size` hint from the client short-circuits the debounce the moment all N are terminal, which makes the common case instant — worth the second field, since a 90s wait would otherwise undercut §6's "feedback while it still matters". The debounce remains the fallback for when a photo never arrives at all, so a group can never hang un-notified.
 
-**Failure mode to handle:** the app is killed between the last photo and `complete`, leaving a `draft` meal that never analyses. A sweeper finalizes `draft` meals idle for >15 minutes, so a batch is never silently lost — it completes with whatever photos arrived.
-
-The agent receives all images in one turn and is told they are **one meal, multiple dishes** — so it enumerates dishes across images rather than treating each as a separate estimate, and de-duplicates when the same dish appears in two shots from different angles. Single-photo capture is just a batch of one; there is no separate code path.
+Meals in a group are shown collapsed as one sitting in the day view and history, expandable to per-dish rows.
 
 ### Drinks
 Photograph the bottle/can — label reading is a solved vision problem and far easier than portion estimation. Barcode when convenient (ML Kit, on-device, offline, free, exact). Otherwise a comment.
@@ -224,7 +224,7 @@ Rules engine computes the state (on track / tight / over / protein-unreachable);
 
 **Channel — decided:** a real notification on *every* logged meal, ~5/day. *Accepted risk:* that frequency is what turns scheduled nudges into wallpaper. The defence is that each carries genuinely new information — your actual remaining budget, not a reminder. If they get swiped unread, fall back to threshold-only notifications with silent home-screen updates. Revisit after two weeks of real use.
 
-A **batch** (§5) fires exactly one notification for the whole sitting, leading with a summary line ("5 dishes — 2,140 kcal") rather than one notification per photo. A **re-analysis** fires an updated notification for that meal.
+A **group** (§5) fires exactly one notification for the whole sitting once it settles, leading with a summary line ("5 dishes — 2,140 kcal") rather than one notification per photo. A **re-analysis** fires an updated notification for that meal.
 
 Optional, **off by default**: a single end-of-day summary.
 
@@ -292,7 +292,7 @@ Two years at 5 meals/day ≈ **350MB**. PVC of 5Gi is generous.
 ### Android — Kotlin
 - Compose, Hilt, **Retrofit generated from `android/openapi.json`** via `org.openapi.generator` 7.20.0 — API contract can't drift
 - CameraX capture; ML Kit barcode scanning
-- **Batch capture** — "add another" on the capture screen, thumbnail strip of the pending batch, **Done** to finalize. Each photo uploads independently through WorkManager (own `photo_uuid`); `complete` fires when the queue for that meal drains. One meal, one analysis, one notification.
+- **Multi-shot sittings** — "add another" on the capture screen, thumbnail strip of the sitting. Client generates a `group_id` on the first shot and stamps it on each subsequent upload; each photo is an ordinary independent upload through WorkManager. `group_size` is sent with the final shot as the settle hint.
 - **Recent-dish chips** on the capture screen (last ~8 confirmed dishes, one tap sets the name)
 - **Share-sheet intent filter** for `text/plain` so a delivery-app order shares straight in
 - **Re-analysis input** on the meal detail screen — one text field, "tell it what's wrong"
@@ -317,15 +317,18 @@ user_profiles    (user_id PK, sex, birth_date, height_cm, activity_factor,
                   calibration_factor, targets_computed_at, timezone)
 weight_logs      (id, user_id, logged_at, weight_kg, source)
 thumbnails       (id, user_id, sha256 UNIQUE, path, width, height, bytes, created_at)
-meals            (id, user_id, client_uuid UNIQUE,
+meals            (id, user_id, client_uuid UNIQUE, thumbnail_id NULL,
+                  group_id NULL, group_size NULL,
                   dish_name, dish_name_normalized, name_source,
                   user_comment TEXT NULL, revision INTEGER NOT NULL DEFAULT 1,
                   eaten_at, timezone_offset, meal_type, status, portion_scale,
                   created_at, updated_at)
-                 -- status:      draft | pending | analyzing | needs_review | confirmed | failed
+                 -- status:      pending | analyzing | needs_review | confirmed | failed
                  -- name_source: vision | recent_chip | share_intent | comment | manual
-meal_photos      (id, meal_id, thumbnail_id, photo_uuid UNIQUE, position, created_at)
-                 -- a meal has 1..N photos; batch capture (§5). Single photo = batch of one.
+                 -- group_id:    client-generated per sitting; groups notifications
+                 --              and the day view only. One photo = one meal = one loop.
+notification_groups (group_id PK, user_id, expected_size NULL, notified_at NULL,
+                  last_photo_at, created_at)
 meal_items       (id, meal_id, revision, position, name, barcode NULL,
                   grams, grams_source, kcal, protein_g, fat_g, carbs_g,
                   macro_source, confidence, reasoning_note)
@@ -346,10 +349,10 @@ agent_sessions   (id, meal_id UNIQUE, messages TEXT, model, prompt_version,
 ```
 
 Notes:
-- `client_uuid` is the **idempotency key**, generated on the phone at capture. A retried upload after a flaky connection can never create a duplicate. Single most important field for offline correctness. `meal_photos.photo_uuid` is the same guarantee one level down, so an individually retried photo in a batch can't be appended twice.
+- `client_uuid` is the **idempotency key**, generated on the phone at capture. A retried upload after a flaky connection can never create a duplicate. Single most important field for offline correctness.
+- `group_id` is client-generated per sitting and carries no analysis semantics — every meal is analysed by its own independent loop regardless (§5). It exists so N dishes produce one notification and collapse into one row in the day view. `notification_groups` tracks settle state; `expected_size` is the optional client hint that fires the notification immediately once all N are terminal, with the 90s idle debounce as fallback.
 - `revision` on `meals`/`meal_items`/`analysis_jobs` implements correction-by-conversation. Re-analysis writes a new revision; prior revisions retained. `parent_job_id` + `user_feedback` make the chain auditable — you can read exactly what the user said and what changed.
 - `agent_sessions.messages` holds the serialized rig thread so a correction **continues** the conversation rather than restarting it. `prompt_version` + `model` decide continue-vs-reseed (§5). `turn_count` drives the history cap.
-- `meals.status = draft` exists only during batch capture, between the first photo and `complete`. The sweeper finalizes drafts idle >15 min.
 - Index on `(user_id, dish_name_normalized)` makes `recall_similar_meals` fast. **Recall reads only the latest revision of `confirmed` meals** — never drafts, never superseded revisions, or the agent learns from its own hallucinations and from corrections the user already rejected.
 - `name_source` measures which input path actually gets used — the only way to find out whether recent-chips and the share sheet were worth building.
 - `agent_steps` makes a bad estimate debuggable. Without it the loop is unimprovable. Populated from rig's multi-turn stream events.
@@ -366,14 +369,12 @@ All under `/api/`, all `utoipa`-annotated so `android/openapi.json` regenerates 
 GET    /api/v1/me                      → profile + today's targets
 PUT    /api/v1/me/profile              → body data; recomputes targets
 GET    /api/v1/dishes/recent           → last N confirmed dishes (recent-chips)
-POST   /api/v1/meals                   → { client_uuid, eaten_at, dish_name?, comment?,
-                                           name_source }  creates meal in `draft`
-                                         201 { meal_id, status: "draft" }
-POST   /api/v1/meals/:id/photos        → multipart: photo + photo_uuid + position
-                                         appends to the batch; independently retryable
-POST   /api/v1/meals/:id/complete      → close the batch, enqueue ONE analysis job
+POST   /api/v1/meals                   → multipart: photo? + client_uuid + eaten_at
+                                         + dish_name? + comment? + name_source
+                                         + group_id? + group_size?
                                          202 { meal_id, status: "pending" }
-GET    /api/v1/meals/:id               → meal + photos + items + agent reasoning + status
+GET    /api/v1/meals/:id               → meal + items + agent reasoning + status
+GET    /api/v1/groups/:group_id        → the sitting: member meals + combined totals
 POST   /api/v1/meals/:id/reanalyze     → { feedback } — resume the persisted agent
                                          session, emit a new revision
 GET    /api/v1/meals/:id/revisions     → revision history + the feedback that caused each
@@ -488,7 +489,7 @@ Monorepo scaffold, axum + diesel + migrations, OIDC JWT validation, `/healthz`, 
 *Done when:* `helm install` yields a running pod, secrets come from a SealedSecret supplied via `additionalObjects`, and a Zitadel token authenticates against `/api/v1/me`.
 
 **M1 — Capture → single-shot estimate**
-The three-call ingest protocol (`meals` → `photos` → `complete`) with `meal_photos`, **built for batches from day one and exercised with a batch of one** — there is never a single-photo code path to migrate later. Draft sweeper. Job queue → one vision call with structured output → items → `needs_review`. Thumbnail pipeline, original deleted. Android app: OIDC login, CameraX, upload, poll, display, confirm. Android build stage added to the Dockerfile, APK served, download card in the Vue app.
+`POST /meals` with one photo → job queue → one vision call with structured output → items → `needs_review`. `group_id` accepted and stored from day one (grouping behaviour lands in M4, but the field costs nothing now and avoids a migration). Thumbnail pipeline, original deleted. Android app: OIDC login, CameraX, upload, poll, display, confirm. Android build stage added to the Dockerfile, APK served, download card in the Vue app.
 *Done when:* you photograph a delivery order and see plausible items, from an APK you installed from the web UI.
 
 **M2 — The rig agent loop**
@@ -499,9 +500,9 @@ The three-call ingest protocol (`meals` → `photos` → `complete`) with `meal_
 `agent_sessions` persistence and resume, `POST /meals/:id/reanalyze`, history cap + `prompt_version` reseed rule, revision model, revision history UI, gram sliders, `portion_scale`, add/remove items, "cooked with" chips, `item_corrections`, `calibration_factor`, recall restricted to latest-revision confirmed meals.
 *Done when:* saying "too much rice, about half that" produces corrected numbers **without re-running the tool calls**, a follow-up "still too much" converges rather than oscillates, and the corrected version — not the original — is what recall returns next time.
 
-**M4 — Capture UX: batch meals & zero-keyboard inputs**
-Multi-photo batch UI ("add another", thumbnail strip, Done), cross-image dish enumeration and de-duplication in the agent prompt. Recent-dish chips, share-sheet intent filter, manual no-photo entry. `name_source` instrumented.
-*Done when:* a five-dish restaurant order photographed as five shots produces one meal and **one** notification, and you can log a repeat order without touching the keyboard.
+**M4 — Capture UX: grouped sittings & zero-keyboard inputs**
+Multi-shot capture UI ("add another", thumbnail strip), `notification_groups` settle logic (`group_size` hint + 90s idle debounce), grouped notification copy, collapsed sitting rows in day view and history. Recent-dish chips, share-sheet intent filter, manual no-photo entry. `name_source` instrumented.
+*Done when:* a five-dish restaurant order photographed as five shots runs five concurrent loops, lands as five independently correctable meals collapsed into one row, and fires **one** notification — and you can log a repeat order without touching the keyboard.
 
 **M5 — Targets & per-meal feedback**
 Onboarding, Mifflin-St Jeor targets, weight logging, day-state computation, verdict phrasing with templated fallback, notification on analysis completion.
@@ -536,15 +537,15 @@ picweight/
 │     ├─ main.rs, lib.rs            # /api routes + fallback_service(static)
 │     ├─ auth.rs                    # openidconnect + JWKS  (port from phos)
 │     ├─ db.rs, models.rs, schema.rs
-│     ├─ api/{meals,photos,profile,days,barcode,dishes,weights,export,events}.rs
+│     ├─ api/{meals,groups,profile,days,barcode,dishes,weights,export,events}.rs
 │     ├─ agent/                     # rig-core; the swap boundary
 │     │  ├─ mod.rs                  # agent construction, multi_turn(6)
 │     │  ├─ tools.rs                # recall_similar_meals, lookup_barcode, web_search
-│     │  ├─ prompts.rs              # identify / critique / multi-image checklists
+│     │  ├─ prompts.rs              # identify / critique checklists
 │     │  ├─ schema.rs               # structured output types
 │     │  ├─ session.rs              # serialize/resume thread, history cap, reseed rule
 │     │  └─ reanalyze.rs            # feedback-driven continuation
-│     ├─ jobs/{analyzer.rs,draft_sweeper.rs}
+│     ├─ jobs/{analyzer.rs,group_settler.rs}
 │     ├─ food/openfoodfacts.rs      # barcode only
 │     ├─ nutrition/targets.rs       # Mifflin-St Jeor
 │     ├─ feedback/{state,phrasing}.rs
@@ -563,7 +564,7 @@ picweight/
 - **Backend:** `cargo test` — Mifflin-St Jeor against published reference values, macro split, local-day bucketing across timezone/DST boundaries. Integration tests on a temp SQLite file with a mocked LLM endpoint covering ingest → loop → confirm, including idempotent replay of the same `client_uuid`. These run **inside the Docker build**, as in phos.
 - **Agent harness:** replay fixtures — recorded photo + canned tool responses produce a deterministic result. Assert the `multi_turn(6)` cap holds and that `MaxDepthError` triggers the single-shot fallback rather than surfacing an error to the user.
 - **Re-analysis:** given a seeded meal and the feedback "half the rice", assert a new revision is written, rice grams roughly halve, the prior revision is retained, and `recall_similar_meals` subsequently returns the *new* revision. Assert the continuation makes **no** repeat tool calls (the session already holds the results), and that a `prompt_version` mismatch triggers reseed rather than continuation.
-- **Batch:** upload three photos under one `client_uuid`, assert one meal, one `analysis_job`, one SSE completion event and one notification. Replay a photo with a duplicate `photo_uuid` and assert it is not appended twice. Abandon a batch without `complete` and assert the sweeper finalizes it with the photos that arrived.
+- **Grouping:** upload three photos under one `group_id`, assert three meals and three `analysis_jobs` (independent loops), but exactly **one** notification. Assert the `group_size` hint fires the notification as soon as the third job is terminal rather than waiting out the debounce; then assert a group sent *without* the hint still settles via the 90s idle path. Assert a failed member doesn't block the group from settling.
 - **Accuracy harness — the one that matters:** order/prepare ~20 meals of *known* weight (kitchen scale), record agent estimate vs truth **with no comment supplied**, since that's the real usage mode. Re-run whenever prompts or model change; keep results in-repo.
 - **Flywheel:** confirm a dish, submit it again, assert the second estimate is recall-sourced and within a few percent.
 - **Auth:** a token from a second IdP works (proves generic OIDC); user A cannot read user B's meals; both the Android public client and web confidential client authenticate.
@@ -580,8 +581,10 @@ picweight/
 
 2. **Will the zero-keyboard paths actually get used?** Recent-chips and the share sheet are the answer to "I won't type comments". If `name_source` shows everything still arriving as `vision`, the accuracy ceiling is set by container-scale heuristics alone. Instrumented in M4 precisely so this is measurable — check after two weeks.
 
-3. **Does rig's OpenAI integration expose everything the loop needs** — **multiple** image inputs in one turn (batch capture), tool calling, strict JSON-schema structured output, and a **serializable/restorable message history** (session resume)? All four are load-bearing and the last two are the ones frameworks most often leave underspecified. Verify in a spike during M1, before M2 and M3 depend on them. The `agent/` module boundary keeps a fallback to hand-rolled `async-openai` cheap, but finding out early is much cheaper than finding out late.
+3. **Does rig's OpenAI integration expose everything the loop needs** — image input, tool calling, strict JSON-schema structured output, and a **serializable/restorable message history** (session resume)? The last is load-bearing for §5 and the one frameworks most often leave underspecified. Verify in a spike during M1, before M3 depends on it. The `agent/` module boundary keeps a fallback to hand-rolled `async-openai` cheap, but finding out early is much cheaper than finding out late.
 
-4. **When does a batch stop being one meal?** Five dishes photographed at a restaurant are one sitting. But nothing stops a batch from being left open across a lunch and a dinner if `complete` is never tapped, and the 15-minute sweeper is a guess, not a principle. If drafts start finalizing mid-meal or spanning meals in real use, the timeout needs to become smarter (idle-since-last-photo, or a foreground prompt) rather than merely longer.
+4. **Is 90s the right debounce, and does the `group_size` hint survive the offline queue?** The hint is sent with the final shot, but WorkManager may deliver photos out of order, so the settler must handle the hint arriving before its members. If sittings routinely notify late in real use, the fix is a shorter debounce plus a foreground "done" signal — not a longer one.
 
-5. **Does the OIDC mobile flow work against Zitadel's native client on a homelab cert?** phos already solved this; port `auth.rs` rather than rediscovering it, but verify early — auth problems surface late and block all device testing.
+5. **Double-counting across a sitting.** Independent loops can't see each other, so a shared side dish photographed twice from two angles is counted twice. The collapsed group view makes it visible and deletion is two taps, but if this happens often the answer is a cheap post-group dedup pass over item names — deliberately *not* built now, since it reintroduces the cross-photo coupling that one-loop-per-photo removed.
+
+6. **Does the OIDC mobile flow work against Zitadel's native client on a homelab cert?** phos already solved this; port `auth.rs` rather than rediscovering it, but verify early — auth problems surface late and block all device testing.

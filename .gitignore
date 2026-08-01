@@ -1,0 +1,110 @@
+# --- Secrets & local config -------------------------------------------------
+# Nothing here should ever reach the repo. OpenAI keys, OIDC client secrets and
+# the release keystore password all live outside version control (§10: the Helm
+# chart references existing Secrets by name and never generates one).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!**/gradle/**/*.key
+secrets.yaml
+secrets.*.yaml
+android/keystore.properties
+android/local.properties
+*.jks
+# The release keystore itself is committed in phos; if you do the same here,
+# force-add it deliberately: `git add -f android/picweight-release.keystore`
+android/*.keystore
+
+# --- Rust -------------------------------------------------------------------
+/target/
+backend/target/
+**/*.rs.bk
+*.pdb
+
+# --- Node / Vue -------------------------------------------------------------
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/stats.html
+.npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tsbuildinfo
+
+# --- Android / Gradle -------------------------------------------------------
+android/build/
+android/app/build/
+android/captures/
+android/.gradle/
+android/.kotlin/
+android/.cxx/
+*.apk
+*.aab
+*.aar
+*.dex
+*.ap_
+android/app/release/
+android/app/debug/
+lint-results*.xml
+
+# --- Runtime data (never commit user food data or photos) -------------------
+# SQLite lives on the PVC in production and in ./data locally.
+/data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+thumbs/
+uploads/
+
+# --- Test & tooling output --------------------------------------------------
+coverage/
+*.profraw
+*.profdata
+# Accuracy-harness results ARE meant to be committed (§13) — keep them:
+!docs/accuracy/**
+
+# --- IDE --------------------------------------------------------------------
+# JetBrains: keep shared project structure, drop per-user and credential files.
+.idea/**
+!.idea/modules.xml
+!.idea/vcs.xml
+!.idea/*.iml
+!.idea/runConfigurations/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/usage.statistics.xml
+.idea/shelf/
+.idea/httpRequests/
+.idea/dataSources/
+.idea/dataSources.local.xml
+.idea/dataSources.xml
+.idea/sonarlint/
+*.iws
+*.ipr
+
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.fleet/
+
+# --- OS ---------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*~
+*.swp
+*.swo
+
+# --- Agent tooling ----------------------------------------------------------
+.claude/settings.local.json
+.claude/worktrees/
+.serena/cache/
