@@ -1,11 +1,27 @@
 /**
- * The single door to the backend.
+ * The single door to the backend — a thin session-policy layer over the
+ * **generated** SDK.
  *
- * Authentication is a `picweight_session` HttpOnly cookie set by
- * `GET /api/auth/callback`, so there is no token for the SPA to attach — the
- * job of this wrapper is the other half: recognise a 401, hand it to whoever
- * owns the router, and turn the API's `ErrorBody` into a message worth showing.
+ * No URL, HTTP method, query-parameter name or body shape is written by hand
+ * in the web client. They all come from `generated/sdk`, generated from
+ * `android/openapi.json`, generated from the Rust types. Hand-maintaining that
+ * contract caused three production bugs in one day, and for the worst of them
+ * the OpenAPI document itself was wrong — so the fix was to make the document
+ * truthful (backend `enum_wire_values_match_the_openapi_schema`) and then to
+ * stop re-typing it here.
+ *
+ * What is deliberately still hand-written is everything the spec cannot say:
+ *   - authentication is a `picweight_session` HttpOnly cookie, so requests need
+ *     `credentials`, not an Authorization header the SDK would attach;
+ *   - a 401 must reach whoever owns the router, exactly once, from anywhere;
+ *   - the API's `ErrorBody` becomes an `ApiError` with a message worth showing.
+ *
+ * The exported `api` surface is unchanged from the hand-rolled version, so
+ * views did not have to move when this was swapped underneath them.
  */
+
+import { client } from '@/lib/generated/sdk/client.gen'
+import * as sdk from '@/lib/generated/sdk/sdk.gen'
 
 const API = '/api/v1'
 
@@ -29,59 +45,48 @@ export function setUnauthorizedHandler(handler) {
   onUnauthorized = handler
 }
 
-async function readError(response) {
-  const fallback = `The server returned ${response.status}.`
+// The session is a cookie; nothing else needs configuring. `throwOnError` stays
+// off so `unwrap` below owns error translation for every call in one place.
+client.setConfig({
+  credentials: 'same-origin',
+  headers: { Accept: 'application/json' },
+})
+
+/**
+ * Turn an SDK result into the value a view wants, or throw an `ApiError`.
+ *
+ * The SDK returns `{ data, error, response }` rather than throwing, which is
+ * exactly the seam needed to apply one session policy to every endpoint.
+ */
+async function unwrap(promise) {
+  let result
   try {
-    const body = await response.json()
-    if (body && typeof body.message === 'string') {
-      return new ApiError(response.status, body.error ?? 'error', body.message)
-    }
-  } catch {
-    // Not JSON — the static fallback or a proxy error page.
-  }
-  return new ApiError(response.status, 'error', fallback)
-}
-
-async function request(path, options = {}) {
-  const { method = 'GET', body, signal, headers = {} } = options
-
-  const init = {
-    method,
-    signal,
-    credentials: 'same-origin',
-    headers: { Accept: 'application/json', ...headers },
-  }
-
-  if (body !== undefined) {
-    if (body instanceof FormData) {
-      init.body = body
-    } else {
-      init.headers['Content-Type'] = 'application/json'
-      init.body = JSON.stringify(body)
-    }
-  }
-
-  let response
-  try {
-    response = await fetch(path, init)
+    result = await promise
   } catch (cause) {
     if (cause?.name === 'AbortError') throw cause
     throw new ApiError(0, 'offline', 'Cannot reach the server. Check the connection and try again.')
   }
 
-  if (response.status === 401) {
+  const { data, error, response } = result
+
+  if (response?.status === 401) {
     onUnauthorized()
     throw new ApiError(401, 'unauthenticated', 'The session has expired. Sign in again.')
   }
-  if (!response.ok) throw await readError(response)
-  if (response.status === 204) return null
 
-  const type = response.headers.get('content-type') || ''
-  if (!type.includes('application/json')) return null
-  return response.json()
+  if (error !== undefined || (response && !response.ok)) {
+    const status = response?.status ?? 0
+    if (error && typeof error.message === 'string') {
+      throw new ApiError(status, error.error ?? 'error', error.message)
+    }
+    throw new ApiError(status, 'error', `The server returned ${status}.`)
+  }
+
+  // 204 and non-JSON bodies surface as undefined; views expect null.
+  return data ?? null
 }
 
-/** Build `?a=1&b=2`, dropping anything unset. */
+/** Build `?a=1&b=2`, dropping anything unset. Used only for plain-navigation URLs. */
 function query(params) {
   const search = new URLSearchParams()
   for (const [key, value] of Object.entries(params ?? {})) {
@@ -91,59 +96,71 @@ function query(params) {
   return rendered ? `?${rendered}` : ''
 }
 
+/** Drop unset query values so the SDK does not serialise `undefined`. */
+function clean(params) {
+  return Object.fromEntries(
+    Object.entries(params ?? {}).filter(([, v]) => v !== undefined && v !== null && v !== ''),
+  )
+}
+
 export const api = {
   /** Claims of the current session, or a 401 when there is none. */
-  session: () => request('/api/auth/me'),
+  session: () => unwrap(sdk.sessionInfo()),
 
   /** Slide the session cookie so an active user never hits the absolute expiry. */
-  refreshSession: () => request('/api/auth/refresh', { method: 'POST' }),
+  refreshSession: () => unwrap(sdk.refresh()),
 
   /** Issuer and client ids, for the "signing in against …" line on /login. */
-  authConfig: () => request('/api/auth/config'),
+  authConfig: () => unwrap(sdk.authConfig()),
 
   /** Identity, profile and today's state in one request. */
-  me: () => request(`${API}/me`),
+  me: () => unwrap(sdk.getMe()),
 
   /** Write body data; the backend recomputes targets and may return warnings. */
-  updateProfile: (profile) => request(`${API}/me/profile`, { method: 'PUT', body: profile }),
+  updateProfile: (profile) => unwrap(sdk.updateProfile({ body: profile })),
 
   /** One local day: totals, targets, verdict, collapsed sittings, loose meals. */
-  day: (date, tzOffset) => request(`${API}/days/${date}${query({ tz_offset: tzOffset })}`),
+  day: (date, tzOffset) =>
+    unwrap(sdk.getDay({ path: { date }, query: clean({ tz_offset: tzOffset }) })),
 
   /** History, newest first. `from`/`to` are inclusive local dates. */
-  meals: (params) => request(`${API}/meals${query(params)}`),
+  meals: (params) => unwrap(sdk.listMeals({ query: clean(params) })),
 
   /** One meal with its items at the current revision. */
-  meal: (id) => request(`${API}/meals/${encodeURIComponent(id)}`),
+  meal: (id) => unwrap(sdk.getMeal({ path: { id } })),
 
   /** Confirm, rename, rescale or replace the item list. */
-  patchMeal: (id, patch) =>
-    request(`${API}/meals/${encodeURIComponent(id)}`, { method: 'PATCH', body: patch }),
+  patchMeal: (id, patch) => unwrap(sdk.patchMeal({ path: { id }, body: patch })),
 
   /** Remove a meal — the two-tap fix for a side dish counted twice. */
-  deleteMeal: (id) => request(`${API}/meals/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteMeal: (id) => unwrap(sdk.deleteMeal({ path: { id } })),
 
   /** Resume the persisted agent session with the user's own words. */
   reanalyze: (id, feedback) =>
-    request(`${API}/meals/${encodeURIComponent(id)}/reanalyze`, {
-      method: 'POST',
-      body: { feedback },
-    }),
+    unwrap(sdk.reanalyzeMeal({ path: { id }, body: { feedback } })),
 
   /** Revision history, newest first, with the feedback that caused each. */
-  revisions: (id) => request(`${API}/meals/${encodeURIComponent(id)}/revisions`),
+  revisions: (id) => unwrap(sdk.mealRevisions({ path: { id } })),
 
   /** A sitting: its member meals and their combined totals. */
-  group: (groupId) => request(`${API}/groups/${encodeURIComponent(groupId)}`),
+  group: (groupId) => unwrap(sdk.getGroup({ path: { group_id: groupId } })),
 
   /** Weight readings, newest first. */
-  weights: (params) => request(`${API}/weights${query(params)}`),
+  weights: (params) => unwrap(sdk.listWeights({ query: clean(params) })),
 
   /** Log a weight; the backend recomputes targets from it. */
-  logWeight: (payload) => request(`${API}/weights`, { method: 'POST', body: payload }),
+  logWeight: (payload) => unwrap(sdk.logWeight({ body: payload })),
 
   /** Last N confirmed dishes. */
-  recentDishes: (limit) => request(`${API}/dishes/recent${query({ limit })}`),
+  recentDishes: (limit) => unwrap(sdk.recentDishes({ query: clean({ limit }) })),
+
+  /** Resolve a scanned barcode to a food record. */
+  barcode: (ean) => unwrap(sdk.resolveBarcode({ path: { ean } })),
+
+  // --- Plain URLs -----------------------------------------------------------
+  //
+  // These are navigated to or handed to EventSource/<img>, not fetched, so they
+  // stay strings. The paths still match the generated SDK's operations.
 
   /** URL of the full dump; the session cookie authorises the plain navigation. */
   exportUrl: (format) => `${API}/export${query({ format })}`,

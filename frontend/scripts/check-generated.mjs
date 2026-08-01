@@ -20,6 +20,17 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const GENERATED = resolve(here, '../src/lib/generated')
 
+/** Every file under `root`, as sorted paths relative to it. */
+function walk(root, prefix = '') {
+  const out = []
+  for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+    const rel = prefix ? join(prefix, entry.name) : entry.name
+    if (entry.isDirectory()) out.push(...walk(root, rel))
+    else out.push(rel)
+  }
+  return out.sort()
+}
+
 const snapshot = mkdtempSync(join(tmpdir(), 'picweight-generated-'))
 const hadOutput = existsSync(GENERATED)
 if (hadOutput) cpSync(GENERATED, snapshot, { recursive: true })
@@ -28,16 +39,21 @@ let failure = null
 try {
   execFileSync('node', [resolve(here, 'generate-api.mjs')], { stdio: 'inherit' })
 
-  const before = hadOutput ? readdirSync(snapshot).sort() : []
-  const after = readdirSync(GENERATED).sort()
+  // The SDK nests (sdk/client, sdk/core), so walk rather than readdir once —
+  // a flat listing would call readFileSync on a directory and crash.
+  const before = hadOutput ? walk(snapshot) : []
+  const after = walk(GENERATED)
 
-  if (before.join() !== after.join()) {
-    failure = `file list differs.\n  committed: ${before.join(', ') || '(nothing)'}\n  generated: ${after.join(', ')}`
+  if (before.join('\n') !== after.join('\n')) {
+    const added = after.filter((f) => !before.includes(f))
+    const removed = before.filter((f) => !after.includes(f))
+    failure =
+      'the set of generated files differs.' +
+      (added.length ? `\n  missing from the commit: ${added.join(', ')}` : '') +
+      (removed.length ? `\n  no longer generated: ${removed.join(', ')}` : '')
   } else {
     for (const name of after) {
-      const committed = readFileSync(join(snapshot, name), 'utf8')
-      const fresh = readFileSync(join(GENERATED, name), 'utf8')
-      if (committed !== fresh) {
+      if (readFileSync(join(snapshot, name), 'utf8') !== readFileSync(join(GENERATED, name), 'utf8')) {
         failure = `${name} differs from what android/openapi.json produces.`
         break
       }

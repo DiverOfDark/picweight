@@ -22,7 +22,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -85,6 +85,29 @@ execFileSync(
   { stdio: 'inherit' },
 )
 
+// Full request SDK: every path, method, query shape and response type.
+//
+// Invoked with plain flags on purpose. A config file using the (deprecated)
+// `asClass` / `output.format` keys makes 0.99 emit ZERO files while still
+// exiting 0 — a silent no-op that would leave `api.js` importing a directory
+// that no longer exists. The assertion below turns that into a hard failure.
+const SDK = resolve(OUT, 'sdk')
+execFileSync('npx', ['@hey-api/openapi-ts', '-i', SPEC, '-o', SDK], { stdio: 'inherit' })
+
+const emitted = readdirSync(SDK)
+const required = ['sdk.gen.ts', 'types.gen.ts', 'client.gen.ts']
+const missing = required.filter((f) => !emitted.includes(f))
+if (missing.length) {
+  console.error(`\nSDK generation produced no usable output (missing: ${missing.join(', ')}).`)
+  console.error('This is the silent-no-op failure mode — check the generator flags.')
+  process.exit(1)
+}
+
+const operations = readFileSync(resolve(SDK, 'sdk.gen.ts'), 'utf8').match(
+  /^export const \w+/gm,
+)?.length
+
 console.log(
-  `Generated ${stringEnums.length} enums (${stringEnums.map(([n]) => n).join(', ')}) + schema types.`,
+  `Generated ${stringEnums.length} enums (${stringEnums.map(([n]) => n).join(', ')}), ` +
+    `schema types, and an SDK with ${operations} operations.`,
 )
