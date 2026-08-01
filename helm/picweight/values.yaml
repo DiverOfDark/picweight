@@ -103,6 +103,18 @@ oidc:
   scopes: "openid profile email"
   # Defaults to https://<ingress.host>/api/auth/callback when empty.
   redirectUri: ""
+  # Additional `aud` values accepted on ID tokens, beyond our own client ids.
+  #
+  # OIDC Core §3.1.3.7 only requires that `aud` CONTAINS this client's id;
+  # providers may list more alongside it, and Zitadel always appends the
+  # numeric project id:  aud = [<client_id>@<project>, <project_id>].
+  #
+  # Empty (the default) accepts any additional audience and logs each new one
+  # once at WARN — this is what lets a stock Zitadel log in out of the box.
+  # Populate it to switch to a strict allowlist; the pod log prints the exact
+  # value to paste here.
+  #   extraAudiences: ["380466054289163197"]
+  extraAudiences: []
   # Name of an existing Secret with client_id / client_secret / mobile_client_id.
   # Empty defaults to "<fullname>-oidc". Create it however you like — see
   # additionalObjects. The chart itself NEVER generates a Secret.

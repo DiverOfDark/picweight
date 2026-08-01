@@ -135,6 +135,10 @@ pub struct AuthState {
     pub client_id: String,
     /// Public/native client id, when configured.
     pub mobile_client_id: Option<String>,
+    /// Operator-configured additional `aud` values. Empty means "accept any
+    /// extra audience and log it once"; non-empty switches to a strict
+    /// allowlist. See [`accept_extra`] for why permissive is the right default.
+    pub extra_audiences: Vec<String>,
     /// Signing keys fetched during discovery.
     ///
     /// Retained so a verifier can be built for the *public* client too — the
@@ -146,16 +150,12 @@ pub struct AuthState {
 
 impl AuthState {
     /// Verifier for ID tokens minted for the confidential **web** client.
-    ///
-    /// The sibling native client id, when configured, is trusted as an
-    /// additional audience — Zitadel and friends routinely list both.
     fn web_id_token_verifier(&self) -> CoreIdTokenVerifier<'_> {
-        let mobile_client_id = self.mobile_client_id.clone();
+        let trusted = self.trusted_extra_audiences();
+        let strict = !self.extra_audiences.is_empty();
         self.oidc_client
             .id_token_verifier()
-            .set_other_audience_verifier_fn(move |aud| {
-                mobile_client_id.as_deref() == Some(aud.as_str())
-            })
+            .set_other_audience_verifier_fn(move |aud| accept_extra(&trusted, strict, aud.as_str()))
     }
 
     /// Verifier for ID tokens minted for the public/native **mobile** client.
@@ -163,16 +163,70 @@ impl AuthState {
     /// `None` when no `mobile_client_id` is configured.
     fn mobile_id_token_verifier(&self) -> Option<CoreIdTokenVerifier<'static>> {
         let mobile_client_id = self.mobile_client_id.clone()?;
-        let web_client_id = self.client_id.clone();
+        let trusted = self.trusted_extra_audiences();
+        let strict = !self.extra_audiences.is_empty();
         Some(
             CoreIdTokenVerifier::new_public_client(
                 ClientId::new(mobile_client_id),
                 self.issuer.clone(),
                 self.jwks.clone(),
             )
-            .set_other_audience_verifier_fn(move |aud| aud.as_str() == web_client_id),
+            .set_other_audience_verifier_fn(move |aud| accept_extra(&trusted, strict, aud.as_str())),
         )
     }
+
+    /// Audiences trusted *in addition* to the one the verifier itself requires:
+    /// our sibling client id plus anything the operator allowlisted.
+    fn trusted_extra_audiences(&self) -> Vec<String> {
+        let mut trusted = vec![self.client_id.clone()];
+        trusted.extend(self.mobile_client_id.clone());
+        trusted.extend(self.extra_audiences.iter().cloned());
+        trusted
+    }
+}
+
+/// Decide whether an *additional* `aud` entry is acceptable.
+///
+/// The security-critical check — that `aud` contains **this** client's id — is
+/// enforced by `openidconnect` before this function is ever consulted (OIDC
+/// Core §3.1.3.7). This only governs the extra entries a provider is explicitly
+/// permitted to list alongside it.
+///
+/// Zitadel appends the numeric project id to every ID token, so a real token
+/// arrives as `aud = [<client_id>@<project>, <project_id>]`. Rejecting unknown
+/// extras therefore breaks login against a stock Zitadel while buying nothing:
+/// an attacker cannot forge the primary audience, and a token minted for a
+/// *different* RP still fails the primary check.
+///
+/// So: allowlist configured (`strict`) → accept only what is on it. Nothing
+/// configured → accept, and log once at WARN with the exact value so it can be
+/// pinned via `PICWEIGHT_OIDC_EXTRA_AUDIENCES`.
+fn accept_extra(trusted: &[String], strict: bool, aud: &str) -> bool {
+    if trusted.iter().any(|t| t == aud) {
+        return true;
+    }
+    if strict {
+        tracing::warn!(
+            audience = %aud,
+            "rejecting ID token: audience is not in PICWEIGHT_OIDC_EXTRA_AUDIENCES"
+        );
+        return false;
+    }
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(Default::default);
+    if let Ok(mut seen) = seen.lock() {
+        if seen.insert(aud.to_string()) {
+            tracing::warn!(
+                audience = %aud,
+                "accepting an unrecognised additional ID-token audience (normal for Zitadel, \
+                 which appends the project id). Set PICWEIGHT_OIDC_EXTRA_AUDIENCES={} to \
+                 pin it to an allowlist.",
+                aud
+            );
+        }
+    }
+    true
 }
 
 /// Discover the OIDC provider and build [`AuthState`].
@@ -223,6 +277,7 @@ pub async fn init_oidc(
         issuer = %oidc.issuer,
         client_id = %oidc.client_id,
         mobile_client_id = ?oidc.mobile_client_id,
+        extra_audiences = ?oidc.extra_audiences,
         "OIDC discovery complete"
     );
 
@@ -236,6 +291,7 @@ pub async fn init_oidc(
         issuer_url: oidc.issuer.clone(),
         client_id: oidc.client_id.clone(),
         mobile_client_id: oidc.mobile_client_id.clone(),
+        extra_audiences: oidc.extra_audiences.clone(),
         jwks,
         issuer,
     })
@@ -1239,5 +1295,57 @@ mod tests {
         assert!(!constant_time_eq(b"abc", b"abd"));
         assert!(!constant_time_eq(b"abc", b"ab"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    // --- additional ID-token audiences ------------------------------------
+    //
+    // Regression tests for a real deployment failure: logging in against a
+    // stock Zitadel returned
+    //   "ID token verification failed: Invalid audiences:
+    //    `380466054289163197` is not a trusted audience"
+    // because Zitadel appends the numeric *project id* to `aud` alongside the
+    // client id, and the verifier trusted only the sibling client id.
+
+    /// The exact shape Zitadel mints: `[<client_id>@<project>, <project_id>]`.
+    const ZITADEL_PROJECT_ID: &str = "380466054289163197";
+
+    fn trusted() -> Vec<String> {
+        vec![
+            "380466054289163197@picweight".to_string(),
+            "380466054289163199@picweight".to_string(),
+        ]
+    }
+
+    #[test]
+    fn zitadels_project_id_audience_is_accepted_by_default() {
+        // The failure that broke a real deployment. With no allowlist
+        // configured this must pass, or login is impossible against Zitadel.
+        assert!(accept_extra(&trusted(), false, ZITADEL_PROJECT_ID));
+    }
+
+    #[test]
+    fn our_own_client_ids_are_always_trusted_in_either_mode() {
+        for strict in [false, true] {
+            assert!(accept_extra(&trusted(), strict, "380466054289163197@picweight"));
+            assert!(accept_extra(&trusted(), strict, "380466054289163199@picweight"));
+        }
+    }
+
+    #[test]
+    fn an_allowlist_makes_verification_strict_again() {
+        let mut allowlisted = trusted();
+        allowlisted.push(ZITADEL_PROJECT_ID.to_string());
+        assert!(accept_extra(&allowlisted, true, ZITADEL_PROJECT_ID));
+        // Anything not on the list is refused once the operator opts in.
+        assert!(!accept_extra(&allowlisted, true, "some-other-rp"));
+    }
+
+    #[test]
+    fn a_foreign_audience_is_refused_only_in_strict_mode() {
+        // Permissive mode accepts it — safe because openidconnect separately
+        // enforces that `aud` contains *our* client id (OIDC Core §3.1.3.7),
+        // so a token minted for another RP still fails the primary check.
+        assert!(accept_extra(&trusted(), false, "some-other-rp"));
+        assert!(!accept_extra(&trusted(), true, "some-other-rp"));
     }
 }

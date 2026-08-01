@@ -17,6 +17,7 @@
 //! | `PICWEIGHT_OIDC_MOBILE_CLIENT_ID` | no | none (web client only) |
 //! | `PICWEIGHT_OIDC_REDIRECT_URI` | no | `http://localhost:<port>/api/auth/callback` |
 //! | `PICWEIGHT_OIDC_SCOPES` | no | `openid profile email` |
+//! | `PICWEIGHT_OIDC_EXTRA_AUDIENCES` | no | empty = accept any extra `aud`, logged (Zitadel appends its project id) |
 //! | `PICWEIGHT_JWT_SECRET` | no | generated once into `<data_path>/.picweight_jwt_secret` |
 //! | `PICWEIGHT_JWT_TTL` | no | `1209600` (14 days) |
 //! | `PICWEIGHT_OPENAI_API_KEY` | **yes** | — (PRD §4: working without a key is a non-goal) |
@@ -91,6 +92,19 @@ pub struct OidcConfig {
     pub redirect_uri: String,
     /// Scopes requested at authorization time.
     pub scopes: Vec<String>,
+    /// Additional `aud` values accepted on ID tokens beyond our own client ids.
+    ///
+    /// OIDC Core §3.1.3.7 requires `aud` to *contain* this client's id — that
+    /// check is enforced separately and is the security-critical one. Providers
+    /// are explicitly permitted to list further audiences alongside it, and
+    /// several do: **Zitadel appends the numeric project id to every ID token**,
+    /// so a real token arrives as `aud = [<client_id>@<project>, <project_id>]`.
+    ///
+    /// Empty (the default) means *accept any additional audience*, logging each
+    /// unrecognised value once at WARN so it can be pasted into
+    /// `PICWEIGHT_OIDC_EXTRA_AUDIENCES` to tighten this to an allowlist.
+    /// Non-empty switches to strict allowlist mode.
+    pub extra_audiences: Vec<String>,
 }
 
 /// Fully resolved runtime configuration.
@@ -163,6 +177,13 @@ impl Config {
             .split_whitespace()
             .map(str::to_string)
             .collect::<Vec<_>>();
+        let extra_audiences = optional("PICWEIGHT_OIDC_EXTRA_AUDIENCES")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect::<Vec<_>>();
 
         let jwt_secret = match optional("PICWEIGHT_JWT_SECRET") {
             Some(secret) => secret,
@@ -198,6 +219,7 @@ impl Config {
                 mobile_client_id,
                 redirect_uri,
                 scopes,
+                extra_audiences,
             },
             jwt_secret,
             jwt_ttl_secs,

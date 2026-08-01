@@ -178,6 +178,7 @@ public/native **mobile** client (PKCE, no secret) for the Android app.
 | `PICWEIGHT_OIDC_MOBILE_CLIENT_ID` | *(unset)* | Public/native client id used by the Android app |
 | `PICWEIGHT_OIDC_REDIRECT_URI` | `http://localhost:<port>/api/auth/callback` | Must match the client registration |
 | `PICWEIGHT_OIDC_SCOPES` | `openid profile email` | Space-separated |
+| `PICWEIGHT_OIDC_EXTRA_AUDIENCES` | *(unset)* | Comma-separated extra `aud` values accepted on ID tokens. Unset = accept any additional audience and log it once. **Zitadel appends its numeric project id to every ID token**, so leaving this unset is what makes a stock Zitadel work; set it to pin an allowlist. Your own client ids are always trusted. |
 | `PICWEIGHT_JWT_SECRET` | *(auto-generated)* | Signs session JWTs; persisted to `<data_path>/.picweight_jwt_secret` |
 | `PICWEIGHT_JWT_TTL` | `1209600` (14 days) | Session lifetime in seconds |
 

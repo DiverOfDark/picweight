@@ -87,6 +87,10 @@ spec:
               value: {{ include "picweight.oidcRedirectUri" . | quote }}
             - name: PICWEIGHT_OIDC_SCOPES
               value: {{ .Values.oidc.scopes | quote }}
+            {{- with .Values.oidc.extraAudiences }}
+            - name: PICWEIGHT_OIDC_EXTRA_AUDIENCES
+              value: {{ join "," . | quote }}
+            {{- end }}
 
             # --- OpenAI -------------------------------------------------------
             # §7: the key lives only in the backend. Clients never see it.

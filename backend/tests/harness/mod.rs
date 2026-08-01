@@ -273,6 +273,7 @@ impl TestApp {
                 client_id: "picweight-web".to_string(),
                 client_secret: "web-secret".to_string(),
                 mobile_client_id: Some("picweight-android".to_string()),
+                extra_audiences: Vec::new(),
                 redirect_uri: "http://127.0.0.1:1/api/auth/callback".to_string(),
                 scopes: vec!["openid".into(), "profile".into(), "email".into()],
             },
