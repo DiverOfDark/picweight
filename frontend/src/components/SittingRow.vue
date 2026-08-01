@@ -16,8 +16,12 @@ import MealRow from '@/components/MealRow.vue'
 const props = defineProps({
   /** A `GroupSummary` from the day view. */
   group: { type: Object, required: true },
-  /** Offset to render `eaten_at` in; the members carry their own. */
-  timezoneOffset: { type: Number, default: 0 },
+  /**
+   * Minutes east of UTC to render `eaten_at` in; the members carry their own.
+   * `null` — the default — means the viewer's own offset at that instant, which
+   * is the right answer for a `GroupSummary`, since it has no offset field.
+   */
+  timezoneOffset: { type: Number, default: null },
 })
 
 const expanded = ref(false)

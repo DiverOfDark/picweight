@@ -10,7 +10,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { Layers, Utensils } from 'lucide-vue-next'
 import { api } from '@/lib/api'
-import { kcal, localDateKey, localTime, relativeDayLabel, shiftDateKey, todayKey } from '@/lib/format'
+import { instantMs, kcal, localDateKey, localTime, relativeDayLabel, shiftDateKey, todayKey } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import EmptyState from '@/components/EmptyState.vue'
 
@@ -86,14 +86,14 @@ const days = computed(() => {
     }
     card.members.push(meal)
     card.kcal += meal.totals?.kcal ?? 0
-    if (new Date(meal.eaten_at) < new Date(card.at)) card.at = meal.eaten_at
+    if (instantMs(meal.eaten_at) < instantMs(card.at)) card.at = meal.eaten_at
   }
 
   return [...buckets.values()]
     .sort((a, b) => (a.key < b.key ? 1 : -1))
     .map((bucket) => ({
       ...bucket,
-      cards: bucket.cards.sort((a, b) => new Date(b.at) - new Date(a.at)),
+      cards: bucket.cards.sort((a, b) => instantMs(b.at) - instantMs(a.at)),
     }))
 })
 

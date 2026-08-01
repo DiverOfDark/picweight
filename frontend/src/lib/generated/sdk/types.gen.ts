@@ -445,6 +445,11 @@ export type HealthResponse = {
 export type LogWeightRequest = {
     /**
      * When it was measured. Defaults to now.
+     *
+     * RFC 3339 **with** an offset, matching the `date-time` format this field
+     * is declared as: a generated client (Retrofit/Jackson `OffsetDateTime`)
+     * can only emit that shape, so accepting anything less would make the
+     * field unusable from the phone.
      */
     logged_at?: string | null;
     source?: null | WeightSource;

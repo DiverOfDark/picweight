@@ -316,7 +316,10 @@ class MealRepository @Inject constructor(
     /** Pulls one meal and folds it into Room. */
     suspend fun refreshMeal(serverId: String): MealEntity? {
         val response = runCatching { api.getMeal(serverId) }.getOrElse {
-            Log.i(TAG, "Refresh of $serverId failed: ${it.message}")
+            // The exception itself, not just its message: a parse failure's message is
+            // useless without the path, and its class is what distinguishes "no network"
+            // from "this build can't read what the server sent".
+            Log.w(TAG, "Refresh of $serverId failed", it)
             return null
         }
         applyServerMeal(response)

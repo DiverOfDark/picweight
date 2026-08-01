@@ -12,7 +12,7 @@ use crate::AppState;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::{NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -29,7 +29,12 @@ pub struct LogWeightRequest {
     /// Weight in kilograms.
     pub weight_kg: f64,
     /// When it was measured. Defaults to now.
-    pub logged_at: Option<NaiveDateTime>,
+    ///
+    /// RFC 3339 **with** an offset, matching the `date-time` format this field
+    /// is declared as: a generated client (Retrofit/Jackson `OffsetDateTime`)
+    /// can only emit that shape, so accepting anything less would make the
+    /// field unusable from the phone.
+    pub logged_at: Option<DateTime<Utc>>,
     /// How it was captured. Defaults to `manual`.
     pub source: Option<WeightSource>,
 }
@@ -40,7 +45,7 @@ pub struct WeightLogResponse {
     /// `weight_logs.id`.
     pub id: String,
     /// When it was measured.
-    pub logged_at: NaiveDateTime,
+    pub logged_at: DateTime<Utc>,
     /// Weight in kilograms.
     pub weight_kg: f64,
     /// How it was captured.
@@ -91,7 +96,9 @@ pub async fn log_weight(
 
     let user_id = user.id;
     let now = Utc::now().naive_utc();
-    let logged_at = body.logged_at.unwrap_or(now);
+    // Storage stays naive UTC (see `models::NewWeightLog`); only the wire
+    // format carries the offset.
+    let logged_at = body.logged_at.map(|at| at.naive_utc()).unwrap_or(now);
     let source = body.source.unwrap_or(WeightSource::Manual);
 
     let response = state
@@ -120,7 +127,7 @@ pub async fn log_weight(
                 Ok(LogWeightResponse {
                     weight: WeightLogResponse {
                         id: row.id,
-                        logged_at: row.logged_at,
+                        logged_at: row.logged_at.and_utc(),
                         weight_kg: row.weight_kg,
                         source,
                     },
@@ -207,7 +214,7 @@ pub fn load_weights(
         .map(|(id, logged_at, weight_kg, source)| {
             Ok(WeightLogResponse {
                 id,
-                logged_at,
+                logged_at: logged_at.and_utc(),
                 weight_kg,
                 source: WeightSource::from_str(&source)?,
             })

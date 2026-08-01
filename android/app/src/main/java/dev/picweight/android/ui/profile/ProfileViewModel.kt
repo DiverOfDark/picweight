@@ -10,6 +10,7 @@ import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.data.repository.ProfileRepository
 import dev.picweight.android.sync.SyncScheduler
+import dev.picweight.android.ui.common.ApiFailures
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -17,6 +18,8 @@ import kotlinx.coroutines.launch
 import java.time.LocalDate
 import java.time.ZoneId
 import javax.inject.Inject
+
+private const val TAG = "ProfileViewModel"
 
 data class ProfileUiState(
     val me: MeResponse? = null,
@@ -63,7 +66,10 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { profile.refresh() }
                 .onSuccess { prefill(it) }
-                .onFailure { _uiState.value = _uiState.value.copy(error = "Couldn't load your profile.") }
+                // "Couldn't load your profile." was true but useless: it is the same
+                // sentence whether the phone is in a lift, the session expired or the
+                // server sent a `/me` body this build can't parse.
+                .onFailure { fail("Couldn't load your profile", it) }
         }
     }
 
@@ -124,7 +130,8 @@ class ProfileViewModel @Inject constructor(
                 update { copy(busy = false, saved = true, warnings = warnings) }
                 profile.me.value?.let { prefill(it) }
             }.onFailure {
-                update { copy(busy = false, error = "Couldn't save: ${it.message}") }
+                update { copy(busy = false) }
+                fail("Couldn't save", it)
             }
         }
     }
@@ -148,7 +155,10 @@ class ProfileViewModel @Inject constructor(
                         )
                     }
                 }
-                .onFailure { update { copy(busy = false, error = "Couldn't log that: ${it.message}") } }
+                .onFailure {
+                    update { copy(busy = false) }
+                    fail("Couldn't log that", it)
+                }
         }
     }
 
@@ -164,6 +174,12 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun dismissError() = update { copy(error = null, saved = false) }
+
+    /** Names the failure on screen and writes the exception itself to logcat. */
+    private fun fail(what: String, t: Throwable) {
+        val failure = ApiFailures.report(TAG, what, t)
+        update { copy(error = "$what: ${failure.message}") }
+    }
 
     private inline fun update(block: ProfileUiState.() -> ProfileUiState) {
         _uiState.value = _uiState.value.block()

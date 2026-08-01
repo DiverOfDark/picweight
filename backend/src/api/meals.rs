@@ -25,7 +25,7 @@ use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
 use axum::Json;
-use chrono::{NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use diesel::SqliteConnection;
 use serde::{Deserialize, Serialize};
@@ -83,7 +83,7 @@ pub struct MealResponse {
     /// Lifecycle status.
     pub status: MealStatus,
     /// When it was eaten (UTC).
-    pub eaten_at: NaiveDateTime,
+    pub eaten_at: DateTime<Utc>,
     /// Minutes east of UTC at capture; buckets the local day.
     pub timezone_offset: i32,
     /// Optional meal-type label ("breakfast", "snack", …).
@@ -99,9 +99,9 @@ pub struct MealResponse {
     /// Failure reason when `status` is `failed` — visible, never silent (§5).
     pub error: Option<String>,
     /// Row creation time.
-    pub created_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
     /// Last modification time.
-    pub updated_at: NaiveDateTime,
+    pub updated_at: DateTime<Utc>,
 }
 
 /// One component of a meal.
@@ -168,7 +168,7 @@ pub struct RevisionEntry {
     /// Tool calls made producing it. Zero on a continuation is the point (§13).
     pub tool_calls: i32,
     /// When the producing job finished.
-    pub created_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Revision history for one meal.
@@ -1020,7 +1020,8 @@ pub async fn meal_revisions(
                     items,
                     totals,
                     tool_calls,
-                    created_at: finished_at.unwrap_or(created_at),
+                    // SQLite stores naive UTC; the wire format must carry the offset.
+                    created_at: finished_at.unwrap_or(created_at).and_utc(),
                 });
             }
 
@@ -1040,7 +1041,7 @@ pub async fn meal_revisions(
                     items,
                     totals,
                     tool_calls: 0,
-                    created_at: meal.created_at,
+                    created_at: meal.created_at.and_utc(),
                 });
             }
             revisions.sort_by_key(|entry| std::cmp::Reverse(entry.revision));
@@ -1126,7 +1127,9 @@ pub fn to_meal_response(
         user_comment: meal.user_comment.clone(),
         revision: meal.revision,
         status: meal.status()?,
-        eaten_at: meal.eaten_at,
+        // SQLite stores naive UTC (see `models::Meal`); the wire format must
+        // carry the offset, or an RFC 3339 client cannot parse it at all.
+        eaten_at: meal.eaten_at.and_utc(),
         timezone_offset: meal.timezone_offset,
         meal_type: meal.meal_type.clone(),
         portion_scale: meal.portion_scale,
@@ -1136,8 +1139,8 @@ pub fn to_meal_response(
         items,
         totals,
         error,
-        created_at: meal.created_at,
-        updated_at: meal.updated_at,
+        created_at: meal.created_at.and_utc(),
+        updated_at: meal.updated_at.and_utc(),
     })
 }
 

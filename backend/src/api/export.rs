@@ -15,7 +15,7 @@ use axum::body::Body;
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::Response;
-use chrono::{NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -46,7 +46,7 @@ pub struct ExportDocument {
     /// Backend version that produced it.
     pub app_version: String,
     /// When it was produced, UTC.
-    pub exported_at: NaiveDateTime,
+    pub exported_at: DateTime<Utc>,
     /// Body data and targets, when onboarding is complete.
     pub profile: Option<ProfileResponse>,
     /// Every weight reading.
@@ -82,7 +82,7 @@ pub async fn export_data(
 ) -> Result<Response, AppError> {
     let format = query.format.unwrap_or_default();
     let user_id = user.id;
-    let exported_at = Utc::now().naive_utc();
+    let exported_at = Utc::now();
 
     let document = state
         .interact(move |conn| {
@@ -102,7 +102,7 @@ pub async fn export_data(
         })
         .await?;
 
-    let stamp = exported_at.date();
+    let stamp = exported_at.date_naive();
     let (content_type, filename, body) = match format {
         ExportFormat::Json => (
             "application/json; charset=utf-8",
@@ -138,9 +138,13 @@ pub fn to_csv(document: &ExportDocument) -> String {
     out.push('\n');
 
     for meal in &document.meals {
-        let local_date = local_date_of(meal.eaten_at, meal.timezone_offset);
+        // `local_date_of` works in naive UTC — the same instant, just without
+        // the offset the wire format carries.
+        let local_date = local_date_of(meal.eaten_at.naive_utc(), meal.timezone_offset);
         let prefix = [
-            meal.eaten_at.to_string(),
+            // RFC 3339 rather than `Display`, which would render a
+            // `DateTime<Utc>` as "… UTC" and no longer round-trip.
+            meal.eaten_at.to_rfc3339(),
             local_date.to_string(),
             meal.id.clone(),
             meal.group_id.clone().unwrap_or_default(),
@@ -237,7 +241,8 @@ mod tests {
         let at = NaiveDate::from_ymd_opt(2026, 8, 1)
             .unwrap()
             .and_hms_opt(22, 30, 0)
-            .unwrap();
+            .unwrap()
+            .and_utc();
         ExportDocument {
             export_version: EXPORT_VERSION,
             app_version: "test".into(),
@@ -289,7 +294,10 @@ mod tests {
         let mut lines = csv.lines();
         assert_eq!(lines.next(), Some(CSV_HEADER));
         let row = lines.next().unwrap();
-        assert!(row.starts_with("2026-08-01 22:30:00,2026-08-02,m1,"), "{row}");
+        assert!(
+            row.starts_with("2026-08-01T22:30:00+00:00,2026-08-02,m1,"),
+            "{row}"
+        );
         assert!(row.contains(",rice,200,agent,260.50,"), "{row}");
     }
 

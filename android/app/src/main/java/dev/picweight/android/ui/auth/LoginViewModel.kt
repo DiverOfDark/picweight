@@ -3,7 +3,6 @@ package dev.picweight.android.ui.auth
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -13,6 +12,7 @@ import dev.picweight.android.data.remote.PicweightApi
 import dev.picweight.android.data.remote.model.AuthConfigResponse
 import dev.picweight.android.data.remote.model.TokenExchangeRequest
 import dev.picweight.android.data.repository.AuthRepository
+import dev.picweight.android.ui.common.ApiFailures
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -133,15 +133,21 @@ class LoginViewModel @Inject constructor(
                             // Parse into the generated model and pass the Class directly:
                             // the reified readValue<T> builds an anonymous TypeReference
                             // whose generic signature R8 strips in release builds.
-                            val config = res.body?.let {
+                            val parsed = res.body?.let {
                                 runCatching { mapper.readValue(it, AuthConfigResponse::class.java) }
-                                    .onFailure { e -> Log.e(TAG, "Auth config parse failed", e) }
-                                    .getOrNull()
                             }
+                            val config = parsed?.getOrNull()
                             if (config?.issuer.isNullOrBlank()) {
+                                // A 2xx we can't read is a contract mismatch, not an
+                                // "unexpected response" — name it, because this is the
+                                // first call the app ever makes and getting it wrong
+                                // sends the user hunting for the wrong problem.
+                                val failure = parsed?.exceptionOrNull()
+                                    ?.let { ApiFailures.report(TAG, "Parsing /api/auth/config", it) }
                                 _uiState.value = _uiState.value.copy(
                                     isFetchingConfig = false,
-                                    error = "Unexpected response from server",
+                                    error = failure?.message
+                                        ?: "That server answered, but not with an OIDC config.",
                                 )
                             } else {
                                 authRepository.saveOidcScopes(config.scopes)
@@ -156,9 +162,10 @@ class LoginViewModel @Inject constructor(
                     }
                 },
                 onFailure = { e ->
+                    val failure = ApiFailures.report(TAG, "Fetching auth config from $raw", e)
                     _uiState.value = _uiState.value.copy(
                         isFetchingConfig = false,
-                        error = "Couldn't reach server: ${e.message ?: e.javaClass.simpleName}",
+                        error = failure.message,
                     )
                 },
             )
@@ -279,9 +286,13 @@ class LoginViewModel @Inject constructor(
                     authRepository.saveAppAuthState(authState.jsonSerializeString())
                     _uiState.value = _uiState.value.copy(isLoading = false, isLoggedIn = true)
                 } catch (e: Exception) {
+                    // The session JWT comes back from `POST /api/auth/token`; if this
+                    // build can't parse that body the user is stuck on the login screen
+                    // with a working server, so the distinction matters here too.
+                    val failure = ApiFailures.report(TAG, "Exchanging the ID token", e)
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        error = "Backend token exchange failed: ${e.message}",
+                        error = "Backend token exchange failed: ${failure.message}",
                     )
                 }
             }

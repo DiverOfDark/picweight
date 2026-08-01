@@ -126,6 +126,13 @@ tasks.configureEach {
     if (name.startsWith("ksp") && name.endsWith("Kotlin")) {
         dependsOn("openApiGenerate")
     }
+    // The contract test in MePayloadContractTest deserialises through the GENERATED
+    // models, so unit-test compilation cannot start before the generator has run.
+    // `preBuild` already pulls it in via the app variants, but saying so on the unit-test
+    // tasks themselves keeps `:app:testDebugUnitTest` correct in a clean tree.
+    if (name.startsWith("compile") && name.contains("UnitTest")) {
+        dependsOn("openApiGenerate")
+    }
 }
 
 dependencies {

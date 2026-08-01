@@ -71,6 +71,32 @@ async fn a_session_token_reaches_the_api() {
     assert!(body["today"].is_object());
 }
 
+/// The whole `/api/v1/me` payload, from a real `users` row, must be RFC 3339.
+///
+/// The fixture-driven walk in `api::timestamp_contract` proves what the DTOs
+/// serialise; this proves what the deployed handler *actually writes* after a
+/// round trip through SQLite, which is where the naive value came from. A phone
+/// that cannot parse this response never issues the `/days` and
+/// `/dishes/recent` calls that follow it, and reports itself offline.
+#[tokio::test]
+async fn the_me_payload_parses_as_rfc3339_end_to_end() {
+    let app = TestApp::start().await;
+    let response = app.get("/api/v1/me", &app.token("alice")).await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.expect("body");
+
+    let created_at = body["user"]["created_at"]
+        .as_str()
+        .expect("created_at is a JSON string");
+    assert!(
+        created_at.ends_with('Z'),
+        "GET /api/v1/me returned created_at={created_at:?} — no UTC designator, \
+so a generated OffsetDateTime client throws before it reads any other field"
+    );
+    chrono::DateTime::parse_from_rfc3339(created_at)
+        .unwrap_or_else(|e| panic!("created_at {created_at:?} is not RFC 3339: {e}"));
+}
+
 #[tokio::test]
 async fn an_unknown_page_falls_through_to_the_spa() {
     let app = TestApp::start().await;

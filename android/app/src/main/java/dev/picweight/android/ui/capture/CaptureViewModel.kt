@@ -1,5 +1,6 @@
 package dev.picweight.android.ui.capture
 
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +10,8 @@ import dev.picweight.android.data.local.RecentDishEntity
 import dev.picweight.android.data.remote.model.NameSource
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.di.ApplicationScope
+import dev.picweight.android.ui.common.ApiFailures
+import dev.picweight.android.ui.common.FailureKind
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +25,8 @@ import java.io.File
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import javax.inject.Inject
+
+private const val TAG = "CaptureViewModel"
 
 data class CaptureUiState(
     val dishName: String = "",
@@ -87,7 +92,13 @@ class CaptureViewModel @Inject constructor(
             ?.takeIf { it.isNotBlank() }
             ?.let { applySharedText(URLDecoder.decode(it, StandardCharsets.UTF_8.name())) }
 
-        viewModelScope.launch { runCatching { meals.refreshRecentDishes(CHIP_COUNT.toLong()) } }
+        viewModelScope.launch {
+            // Stale chips are not worth a banner over — the capture path must never be
+            // blocked by the network — but a silent failure here is how "the chips went
+            // away" becomes unexplainable, so it always reaches logcat.
+            runCatching { meals.refreshRecentDishes(CHIP_COUNT.toLong()) }
+                .onFailure { ApiFailures.report(TAG, "Refreshing recent dishes", it) }
+        }
     }
 
     // ---- the zero-keyboard inputs ----------------------------------------
@@ -142,7 +153,15 @@ class CaptureViewModel @Inject constructor(
         if (form.value.barcode == ean) return
         form.value = form.value.copy(barcode = ean)
         viewModelScope.launch {
-            val food = runCatching { meals.resolveBarcode(ean) }.getOrNull()
+            val food = runCatching { meals.resolveBarcode(ean) }
+                .onFailure {
+                    val failure = ApiFailures.report(TAG, "Resolving barcode $ean", it)
+                    // The EAN is already in the comment, so the agent can still look it
+                    // up server-side and an outage costs nothing. Anything else means the
+                    // lookup is broken rather than merely unavailable — say so.
+                    if (failure.kind != FailureKind.OFFLINE) error.value = failure.message
+                }
+                .getOrNull()
             val product = food?.let { listOfNotNull(it.brand, it.name).joinToString(" ").trim() }
             form.value = form.value.copy(
                 barcodeProduct = product,
@@ -183,7 +202,11 @@ class CaptureViewModel @Inject constructor(
                 // Per-shot fields reset; the sitting's own state does not.
                 form.value = state.copy(dishName = "", comment = "", commentOpen = false, barcode = null, barcodeProduct = null, nameSource = NameSource.VISION)
             }.onFailure {
-                error.value = "Couldn't save that shot: ${it.message}"
+                // Deliberately NOT routed through ApiFailures: nothing here touches the
+                // network. An IOException on this path is the phone's own storage, and
+                // calling that "offline" would be the same lie in a new place.
+                Log.e(TAG, "Saving a shot of sitting $sittingId failed", it)
+                error.value = "Couldn't save that shot — this phone's storage refused it."
                 file.delete()
             }
             busy.value = false
@@ -215,7 +238,12 @@ class CaptureViewModel @Inject constructor(
                     nameSource = state.effectiveNameSource(hasPhoto = false),
                 )
                 meals.closeSitting(sittingId)
-            }.onFailure { error.value = "Couldn't save that: ${it.message}" }
+            }.onFailure {
+                // Local write again — Room, not the server. The upload is WorkManager's
+                // problem and happens later.
+                Log.e(TAG, "Saving a no-photo entry failed", it)
+                error.value = "Couldn't save that — this phone's storage refused it."
+            }
             busy.value = false
             finished.value = true
         }

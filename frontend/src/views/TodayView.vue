@@ -10,7 +10,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ChevronLeft, ChevronRight, RefreshCw, Radio } from 'lucide-vue-next'
 import { api } from '@/lib/api'
-import { browserOffsetMinutes, dayLabelFull, kcal, relativeDayLabel, shiftDateKey, todayKey } from '@/lib/format'
+import { dayLabelFull, dayOffsetMinutes, instantMs, kcal, relativeDayLabel, shiftDateKey, todayKey } from '@/lib/format'
 import { applyDayAccent } from '@/lib/status'
 import { useMealEvents } from '@/composables/useMealEvents'
 import { Button } from '@/components/ui/button'
@@ -44,14 +44,17 @@ const entries = computed(() => {
     })),
     ...(day.value.meals ?? []).map((meal) => ({ kind: 'meal', id: meal.id, at: meal.eaten_at, meal })),
   ]
-  return rows.sort((a, b) => new Date(b.at) - new Date(a.at))
+  return rows.sort((a, b) => instantMs(b.at) - instantMs(a.at))
 })
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    day.value = await api.day(dateKey.value, browserOffsetMinutes())
+    // `tz_offset` buckets the day server-side, so it has to be the offset in
+    // force on *that* day rather than the one in force right now — otherwise a
+    // January day read in July is bucketed an hour out.
+    day.value = await api.day(dateKey.value, dayOffsetMinutes(dateKey.value))
     applyDayAccent(day.value.state.status)
   } catch (e) {
     error.value = e.message
@@ -144,11 +147,13 @@ onMounted(load)
 
         <div class="space-y-1.5">
           <template v-for="entry in entries" :key="entry.id">
-            <SittingRow
-              v-if="entry.kind === 'group'"
-              :group="entry.group"
-              :timezone-offset="browserOffsetMinutes()"
-            />
+            <!--
+              No offset passed: a `GroupSummary` carries none of its own, so the
+              row renders in the viewer's zone as it stood at that instant.
+              Passing the offset as it stands *now* slid every row by an hour
+              once the clocks changed.
+            -->
+            <SittingRow v-if="entry.kind === 'group'" :group="entry.group" />
             <MealRow v-else :meal="entry.meal" />
           </template>
         </div>

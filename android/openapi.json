@@ -1923,7 +1923,7 @@
               "null"
             ],
             "format": "date-time",
-            "description": "When it was measured. Defaults to now."
+            "description": "When it was measured. Defaults to now.\n\nRFC 3339 **with** an offset, matching the `date-time` format this field\nis declared as: a generated client (Retrofit/Jackson `OffsetDateTime`)\ncan only emit that shape, so accepting anything less would make the\nfield unusable from the phone."
           },
           "source": {
             "oneOf": [

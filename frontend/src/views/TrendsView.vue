@@ -7,7 +7,7 @@ import { computed, onMounted, ref } from 'vue'
 import { MEAL_STATUS, WEIGHT_SOURCE } from '@/lib/enums'
 import { Scale } from 'lucide-vue-next'
 import { api } from '@/lib/api'
-import { dayLabel, grams, kcal, kg, localDateKey, shiftDateKey, stamp, todayKey } from '@/lib/format'
+import { dayLabel, grams, instantMs, kcal, kg, localDateKey, shiftDateKey, stamp, todayKey } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -54,14 +54,21 @@ function setRange(days) {
   load()
 }
 
-/** The API returns readings newest first; a trend line reads oldest first. */
+/**
+ * The API returns readings newest first; a trend line reads oldest first.
+ *
+ * A weight reading has no offset of its own, so its day is the viewer's day —
+ * `localDateKey` with no offset argument. It used to pass `0`, i.e. UTC, which
+ * put a reading logged at 01:00 in Moscow on the previous day's tick while the
+ * list right below it said otherwise.
+ */
 const weightPoints = computed(() =>
   [...weights.value]
-    .sort((a, b) => new Date(a.logged_at) - new Date(b.logged_at))
+    .sort((a, b) => instantMs(a.logged_at) - instantMs(b.logged_at))
     .map((reading) => ({
       at: reading.logged_at,
       value: reading.weight_kg,
-      caption: dayLabel(localDateKey(reading.logged_at, 0)),
+      caption: dayLabel(localDateKey(reading.logged_at)),
     })),
 )
 

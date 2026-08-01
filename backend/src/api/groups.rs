@@ -14,7 +14,7 @@ use crate::schema::{meals, notification_groups};
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::Json;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -32,9 +32,9 @@ pub struct GroupResponse {
     /// True once no member is still `pending` or `analyzing`.
     pub settled: bool,
     /// When the single grouped notification fired, if it has.
-    pub notified_at: Option<NaiveDateTime>,
+    pub notified_at: Option<DateTime<Utc>>,
     /// When the most recent photo joined; the debounce runs from here.
-    pub last_photo_at: NaiveDateTime,
+    pub last_photo_at: DateTime<Utc>,
     /// Sum across every member meal.
     pub totals: MacroTotals,
     /// The member meals, oldest first — the expanded per-dish rows.
@@ -53,7 +53,7 @@ pub struct GroupSummary {
     /// Dish names, for the collapsed row's label.
     pub dish_names: Vec<String>,
     /// Earliest `eaten_at` among the members.
-    pub eaten_at: NaiveDateTime,
+    pub eaten_at: DateTime<Utc>,
     /// True when a member failed — the row should say so rather than quietly
     /// under-report.
     pub has_failures: bool,
@@ -117,8 +117,9 @@ pub async fn get_group(
                 expected_size,
                 member_count: meals.len(),
                 settled,
-                notified_at,
-                last_photo_at,
+                // SQLite stores naive UTC; the wire format must carry the offset.
+                notified_at: notified_at.map(|at| at.and_utc()),
+                last_photo_at: last_photo_at.and_utc(),
                 totals,
                 meals,
             })
@@ -164,7 +165,7 @@ pub fn summarize_groups(meals: &[MealResponse]) -> (Vec<GroupSummary>, Vec<MealR
                 .iter()
                 .map(|meal| meal.eaten_at)
                 .min()
-                .unwrap_or_else(|| chrono::Utc::now().naive_utc());
+                .unwrap_or_else(Utc::now);
             Some(GroupSummary {
                 group_id,
                 member_count: group.len(),
@@ -193,7 +194,8 @@ mod tests {
         let at = NaiveDate::from_ymd_opt(2026, 8, 1)
             .unwrap()
             .and_hms_opt(12, 0, 0)
-            .unwrap();
+            .unwrap()
+            .and_utc();
         MealResponse {
             id: id.to_string(),
             client_uuid: format!("uuid-{id}"),

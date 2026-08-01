@@ -10,7 +10,7 @@ use crate::models::Food;
 use crate::AppState;
 use axum::extract::{Path, State};
 use axum::Json;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -36,7 +36,7 @@ pub struct FoodResponse {
     /// Carbohydrate per 100g.
     pub carbs_100g: Option<f64>,
     /// When the record was last fetched from the provider.
-    pub fetched_at: NaiveDateTime,
+    pub fetched_at: DateTime<Utc>,
 }
 
 impl From<Food> for FoodResponse {
@@ -51,7 +51,8 @@ impl From<Food> for FoodResponse {
             protein_100g: food.protein_100g,
             fat_100g: food.fat_100g,
             carbs_100g: food.carbs_100g,
-            fetched_at: food.fetched_at,
+            // SQLite stores naive UTC; the wire format must carry the offset.
+            fetched_at: food.fetched_at.and_utc(),
         }
     }
 }

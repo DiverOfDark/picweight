@@ -19,7 +19,7 @@ use crate::models::MealStatus;
 use crate::AppState;
 use axum::extract::State;
 use axum::response::sse::{Event, Sse};
-use chrono::NaiveDateTime;
+use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -93,7 +93,7 @@ pub struct MealEvent {
     /// Failure reason, set only on `Failed`.
     pub error: Option<String>,
     /// When the event was produced, UTC.
-    pub emitted_at: NaiveDateTime,
+    pub emitted_at: DateTime<Utc>,
 }
 
 impl MealEvent {
@@ -112,7 +112,7 @@ impl MealEvent {
             headline: None,
             body: None,
             error: None,
-            emitted_at: chrono::Utc::now().naive_utc(),
+            emitted_at: Utc::now(),
         }
     }
 

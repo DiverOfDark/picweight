@@ -16,7 +16,7 @@ use crate::schema::{meal_items, meals};
 use crate::AppState;
 use axum::extract::{Query, State};
 use axum::Json;
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ pub struct RecentDish {
     /// Normalized form — what recall matches on.
     pub dish_name_normalized: String,
     /// Most recent time this dish was eaten.
-    pub last_eaten_at: NaiveDateTime,
+    pub last_eaten_at: DateTime<Utc>,
     /// How many times it has been confirmed. High counts are the flywheel
     /// working.
     pub occurrences: i64,
@@ -133,7 +133,9 @@ pub async fn recent_dishes(
                             RecentDish {
                                 dish_name: dish_name.unwrap_or_else(|| normalized.clone()),
                                 dish_name_normalized: normalized,
-                                last_eaten_at: eaten_at,
+                                // SQLite stores naive UTC; the wire format
+                                // must carry the offset.
+                                last_eaten_at: eaten_at.and_utc(),
                                 occurrences: 1,
                                 totals: MacroTotals::default(),
                                 last_meal_id: meal_id,

@@ -10,6 +10,7 @@ import dev.picweight.android.data.remote.model.PatchMealItem
 import dev.picweight.android.data.remote.model.RevisionEntry
 import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
+import dev.picweight.android.ui.common.ApiFailures
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,6 +24,8 @@ import kotlinx.coroutines.launch
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import javax.inject.Inject
+
+private const val TAG = "MealDetailViewModel"
 
 data class MealDetailUiState(
     val meal: MealEntity? = null,
@@ -134,7 +137,7 @@ class MealDetailViewModel @Inject constructor(
                     feedback.value = ""
                     message.value = "Sent. The agent is picking up where it left off."
                 }
-                .onFailure { error.value = "Couldn't send that: ${it.message}" }
+                .onFailure { fail("Couldn't send that", it) }
             busy.value = false
         }
     }
@@ -145,7 +148,7 @@ class MealDetailViewModel @Inject constructor(
         viewModelScope.launch {
             busy.value = true
             runCatching { meals.confirm(serverId) }
-                .onFailure { error.value = "Couldn't confirm: ${it.message}" }
+                .onFailure { fail("Couldn't confirm", it) }
             busy.value = false
         }
     }
@@ -155,7 +158,7 @@ class MealDetailViewModel @Inject constructor(
         viewModelScope.launch {
             busy.value = true
             runCatching { meals.setPortionScale(serverId, scale) }
-                .onFailure { error.value = "Couldn't update the portion: ${it.message}" }
+                .onFailure { fail("Couldn't update the portion", it) }
             busy.value = false
         }
     }
@@ -182,7 +185,7 @@ class MealDetailViewModel @Inject constructor(
         viewModelScope.launch {
             busy.value = true
             runCatching { meals.replaceItems(serverId, patched) }
-                .onFailure { error.value = "Couldn't save that edit: ${it.message}" }
+                .onFailure { fail("Couldn't save that edit", it) }
             busy.value = false
         }
     }
@@ -195,7 +198,7 @@ class MealDetailViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching { meals.revisions(serverId) }
                 .onSuccess { revisions.value = it.revisions.orEmpty() }
-                .onFailure { error.value = "Couldn't load the revision history: ${it.message}" }
+                .onFailure { fail("Couldn't load the revision history", it) }
         }
     }
 
@@ -203,7 +206,7 @@ class MealDetailViewModel @Inject constructor(
         val uuid = clientUuid.value ?: return
         viewModelScope.launch {
             runCatching { meals.delete(uuid) }
-                .onFailure { error.value = "Couldn't delete: ${it.message}" }
+                .onFailure { fail("Couldn't delete", it) }
             deleted.value = true
         }
     }
@@ -211,5 +214,17 @@ class MealDetailViewModel @Inject constructor(
     fun dismissMessage() {
         message.value = null
         error.value = null
+    }
+
+    /**
+     * One place where a failure becomes both a logcat line and a sentence.
+     *
+     * These messages used to end in `${it.message}`, which is null for most transport
+     * failures and a wall of Jackson internals for the rest. [ApiFailures] separates a
+     * genuine outage from an HTTP status from a response body this build cannot parse,
+     * and writes the exception itself to logcat either way.
+     */
+    private fun fail(what: String, t: Throwable) {
+        error.value = "$what: ${ApiFailures.report(TAG, what, t).message}"
     }
 }

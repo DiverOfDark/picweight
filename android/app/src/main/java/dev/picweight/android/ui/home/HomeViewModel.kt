@@ -8,6 +8,9 @@ import dev.picweight.android.data.local.MealEntity
 import dev.picweight.android.data.repository.AuthRepository
 import dev.picweight.android.data.repository.MealRepository
 import dev.picweight.android.data.repository.ProfileRepository
+import dev.picweight.android.ui.common.ApiFailure
+import dev.picweight.android.ui.common.ApiFailures
+import dev.picweight.android.ui.common.FailureKind
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -35,6 +38,26 @@ sealed interface DayRow {
         val kcal: Double get() = meals.sumOf { it.kcal }
         val hasFailures: Boolean
             get() = meals.any { it.status == dev.picweight.android.data.local.LocalMealStatus.FAILED }
+    }
+}
+
+private const val TAG = "HomeViewModel"
+
+/**
+ * The banner text for a refresh that failed.
+ *
+ * Split out of the ViewModel because the rule it encodes is worth pinning in a test:
+ * "showing what this phone knows" is a promise that Room holds the best available
+ * answer, and that is only true when the request never reached the server. Everything
+ * else — a status code, a body this build can't read, an expired session — is named for
+ * what it is. Reporting all of them as "Offline" is what made a serialisation mismatch
+ * in `/api/v1/me` take hours to find: the app looked disconnected while the server saw a
+ * clean 200 and no follow-up requests at all.
+ */
+object HomeErrorCopy {
+    fun forFailure(failure: ApiFailure): String = when (failure.kind) {
+        FailureKind.OFFLINE -> "Offline — showing what this phone knows."
+        else -> failure.message
     }
 }
 
@@ -94,8 +117,12 @@ class HomeViewModel @Inject constructor(
                 meals.refreshDay(today)
                 meals.refreshRecentDishes()
             }.onFailure {
-                // Room already has yesterday's answer; say so rather than blanking the UI.
-                error.value = "Offline — showing what this phone knows."
+                // The three calls above run in sequence, so whichever one died is the one
+                // that matters — and it goes to logcat with its stack trace regardless of
+                // how short the banner ends up being.
+                error.value = HomeErrorCopy.forFailure(
+                    ApiFailures.report(TAG, "Refreshing today", it)
+                )
             }
             refreshing.value = false
         }

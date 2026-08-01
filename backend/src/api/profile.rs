@@ -17,7 +17,7 @@ use crate::schema::{user_profiles, users, weight_logs};
 use crate::AppState;
 use axum::extract::State;
 use axum::Json;
-use chrono::{NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use diesel::prelude::*;
 use diesel::SqliteConnection;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ pub struct UserResponse {
     /// Display name from the ID token.
     pub display_name: Option<String>,
     /// When the account was first seen.
-    pub created_at: NaiveDateTime,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Body data and the targets derived from it.
@@ -64,7 +64,7 @@ pub struct ProfileResponse {
     /// Per-user multiplier learned from correction history (§5 hidden fat).
     pub calibration_factor: f64,
     /// When the targets were last recomputed.
-    pub targets_computed_at: Option<NaiveDateTime>,
+    pub targets_computed_at: Option<DateTime<Utc>>,
     /// IANA timezone name, the default for meals that arrive without an offset.
     pub timezone: String,
     /// Most recent logged weight, for convenience.
@@ -164,7 +164,8 @@ pub async fn get_me(
             id: row.id,
             email: row.email,
             display_name: row.display_name,
-            created_at: row.created_at,
+            // SQLite stores naive UTC; the wire format must carry the offset.
+            created_at: row.created_at.and_utc(),
         },
         profile,
         today,
@@ -380,7 +381,7 @@ pub fn load_profile_response(
         target_fat_g: profile.target_fat_g,
         target_carbs_g: profile.target_carbs_g,
         calibration_factor: profile.calibration_factor,
-        targets_computed_at: profile.targets_computed_at,
+        targets_computed_at: profile.targets_computed_at.map(|at| at.and_utc()),
         timezone: profile.timezone,
         current_weight_kg,
     }))
