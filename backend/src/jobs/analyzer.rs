@@ -801,7 +801,14 @@ pub fn should_retry(error: &AppError, attempts: i32) -> bool {
 /// meals are expensive to analyse", not to bill anyone. An unknown model falls
 /// back to [`DEFAULT_PRICING`] rather than recording zero, because a silent zero
 /// would make the whole column untrustworthy.
+/// Longest prefix wins, so `gpt-5.4-mini` is never priced as `gpt-5.4`. Rates
+/// are the **standard** tier from <https://developers.openai.com/api/docs/pricing>;
+/// batch, flex and cached-input tiers are cheaper and are not modelled, so a
+/// figure derived from this table is an upper bound rather than a bill.
 pub const MODEL_PRICING: &[(&str, i64, i64)] = &[
+    // Verified against OpenAI's published pricing on 2026-08-02.
+    ("gpt-5.4-mini", 750_000, 4_500_000),
+    ("gpt-5.4", 2_500_000, 15_000_000),
     ("gpt-4.1-nano", 100_000, 400_000),
     ("gpt-4.1-mini", 400_000, 1_600_000),
     ("gpt-4.1", 2_000_000, 8_000_000),

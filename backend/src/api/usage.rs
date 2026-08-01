@@ -362,17 +362,36 @@ mod tests {
 
     #[test]
     fn an_unpriced_model_is_reported_as_a_guess_not_as_a_total() {
-        let (_, _, source) = resolve_pricing(&[], "gpt-5.4-mini");
-        assert_eq!(
-            source,
-            PricingSource::Fallback,
-            "gpt-5.4 is not in the built-in table; saying otherwise would make the \
-             dollar figure look sourced when it is not"
-        );
+        // Deliberately a model nothing could know. Naming a real one here would
+        // make this test fail the day it is added to the table, which is the
+        // wrong reason to go red.
+        let (_, _, source) = resolve_pricing(&[], "some-future-model-v9");
+        assert_eq!(source, PricingSource::Fallback);
 
         let (from, to) = window();
-        let summary = summarise(&[], from, to, vec![job("gpt-5.4-mini", 1_000_000, 0, "m1")]);
+        let summary = summarise(
+            &[],
+            from,
+            to,
+            vec![job("some-future-model-v9", 1_000_000, 0, "m1")],
+        );
         assert!(summary.has_estimated_pricing);
+    }
+
+    #[test]
+    fn the_default_model_is_priced_out_of_the_box() {
+        // The shipped default (config::DEFAULT_OPENAI_MODEL) must not land on
+        // the fallback: a fresh install should show real dollars, not an amber
+        // "no rate — guessed" badge on its own default.
+        let (input, output, source) =
+            resolve_pricing(&[], crate::config::DEFAULT_OPENAI_MODEL);
+        assert_eq!(source, PricingSource::BuiltIn);
+        // $0.75 in / $4.50 out per million, per OpenAI's published pricing.
+        assert_eq!((input, output), (750_000, 4_500_000));
+
+        // And it must not be priced as the full gpt-5.4 by prefix collision.
+        let (full_in, full_out, _) = resolve_pricing(&[], "gpt-5.4");
+        assert!(input < full_in && output < full_out);
     }
 
     #[test]
@@ -380,18 +399,25 @@ mod tests {
         let (from, to) = window();
         let rows = || vec![job("gpt-5.4-mini", 1_000_000, 1_000_000, "m1")];
 
-        let guessed = summarise(&[], from, to, rows());
-        let priced = summarise(
+        // Built-in: $0.75 + $4.50 = $5.25.
+        let built_in = summarise(&[], from, to, rows());
+        assert_eq!(built_in.cost_micro_usd, 5_250_000);
+        assert!(!built_in.has_estimated_pricing);
+
+        // An operator on a proxy pays something else entirely, and their number
+        // wins — over the whole history, not just runs after the change.
+        let negotiated = summarise(
             &[("gpt-5.4-mini".to_string(), 250_000, 2_000_000)],
             from,
             to,
             rows(),
         );
-
-        // 1M in at 0.25 + 1M out at 2.00 = 2.25 USD.
-        assert_eq!(priced.cost_micro_usd, 2_250_000);
-        assert_ne!(guessed.cost_micro_usd, priced.cost_micro_usd);
-        assert!(!priced.has_estimated_pricing);
+        assert_eq!(negotiated.cost_micro_usd, 2_250_000);
+        assert_ne!(built_in.cost_micro_usd, negotiated.cost_micro_usd);
+        assert_eq!(
+            negotiated.by_model[0].pricing_source,
+            PricingSource::Configured
+        );
     }
 
     #[test]

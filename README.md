@@ -164,7 +164,7 @@ fails loudly: the meal goes to `failed` with a visible reason.
 | `PICWEIGHT_OPENAI_MODEL` | `gpt-5.4-mini` | Vision model handed to rig |
 | `PICWEIGHT_OPENAI_BASE_URL` | `https://api.openai.com/v1` | Point at LiteLLM / vLLM / Azure, or a mock in tests |
 | `PICWEIGHT_WEB_SEARCH_ENABLED` | `false` | Registers the agent's `web_search` tool (chain-restaurant nutrition) |
-| `PICWEIGHT_MODEL_PRICING` | *(unset)* | Token rates for the **AI usage** screen: `prefix=input/output`, comma-separated, micro-USD per million tokens — e.g. `gpt-5.4-mini=250000/2000000` for $0.25/$2.00. Unset falls back to a compiled-in table and then to a guess, which the screen labels as such. Changing it reprices history, because cost is derived from stored token counts rather than frozen at write time |
+| `PICWEIGHT_MODEL_PRICING` | *(unset)* | Token rates for the **AI usage** screen: `prefix=input/output`, comma-separated, micro-USD per million tokens — e.g. `gpt-5.4-mini=250000/2000000` for $0.25/$2.00. Unset falls back to a compiled-in table — which already covers the default model — and then to a guess, which the screen labels as such. Set it if you are behind a proxy or negotiated a different rate. Changing it reprices history, because cost is derived from stored token counts rather than frozen at write time |
 
 ### OIDC / SSO
 
